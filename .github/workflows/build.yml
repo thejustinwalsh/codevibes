@@ -1,0 +1,43 @@
+name: build-images
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag: { description: "version tag to build", required: true }
+permissions:
+  contents: read
+  packages: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+      - name: Apply production codemod (asserts targets)
+        run: sh patches/apply.sh .
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./codevibes-backend
+          file: ./codevibes-backend/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/codevibes-backend:${{ env.TAG }}
+            ghcr.io/${{ github.repository_owner }}/codevibes-backend:latest
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.web
+          build-args: VITE_API_URL=https://codevibes.tjw.dev
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/codevibes-web:${{ env.TAG }}
+            ghcr.io/${{ github.repository_owner }}/codevibes-web:latest
