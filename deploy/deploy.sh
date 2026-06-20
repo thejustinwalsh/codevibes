@@ -13,23 +13,39 @@ log() { echo "[deploy] $*"; }
 current_tag() { [ -f "$STATE" ] && (grep '^CURRENT=' "$STATE" | cut -d= -f2) || echo ""; }
 previous_tag() { [ -f "$STATE" ] && (grep '^PREVIOUS=' "$STATE" | cut -d= -f2) || echo ""; }
 
+# List remote tags via the ghcr REST API (public images, anonymous token).
+# Uses curl+jq (already installed by cloud-init) — no skopeo dependency.
 latest_remote_tag() {
-  skopeo list-tags "docker://$IMAGE_BACKEND" \
-    | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -n1
+  local repo token
+  repo="${IMAGE_BACKEND#ghcr.io/}"   # e.g. thejustinwalsh/codevibes-backend
+  token="$(curl -fsS "https://ghcr.io/token?scope=repository:${repo}:pull" | jq -r '.token')"
+  curl -fsS -H "Authorization: Bearer ${token}" "https://ghcr.io/v2/${repo}/tags/list" \
+    | jq -r '.tags[]?' | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -n1
 }
 
-# Smoke test: boot new backend image in a throwaway container, check /api/health
-# AND a read-only SQLite query against the live DB (catches broken mount / corrupt DB).
+# Smoke test: boot the candidate backend against the REAL data volume (read-write)
+# with the real podman secrets, and poll /api/health. This works on first deploy
+# (the backend creates the DB on the volume if absent) and still catches a broken
+# mount or corrupt DB (the backend fails to boot → health never comes up → fail).
 smoke_test() {
-  local tag="$1"
+  local tag="$1" ok=1 i
   if [ "${DEPLOY_SMOKE_OVERRIDE:-}" = "pass" ]; then return 0; fi
   if [ "${DEPLOY_SMOKE_OVERRIDE:-}" = "fail" ]; then return 1; fi
-  podman run --rm --name codevibes-smoke \
+  podman rm -f codevibes-smoke >/dev/null 2>&1 || true
+  podman run -d --name codevibes-smoke \
     -e NODE_ENV=production -e PORT=3001 -e DB_PATH=/app/data/codevibes.db \
-    -v "$DATA_MOUNT":/app/data:ro,Z \
-    --health-cmd 'wget -q --spider http://localhost:3001/api/health || exit 1' \
-    "$IMAGE_BACKEND:$tag" \
-    node -e "require('better-sqlite3')(process.env.DB_PATH,{readonly:true,fileMustExist:true}).prepare('SELECT 1').get(); process.exit(0)"
+    --secret "${SECRET_JWT},type=env,target=JWT_SECRET" \
+    --secret "${SECRET_ENCKEY},type=env,target=ENCRYPTION_KEY" \
+    -v "$DATA_MOUNT":/app/data:Z \
+    -p 127.0.0.1:3099:3001 \
+    "$IMAGE_BACKEND:$tag" >/dev/null
+  for i in $(seq 1 20); do
+    if curl -fsS http://127.0.0.1:3099/api/health >/dev/null 2>&1; then ok=0; break; fi
+    sleep 1
+  done
+  podman logs codevibes-smoke 2>&1 | tail -5 || true
+  podman rm -f codevibes-smoke >/dev/null 2>&1 || true
+  return $ok
 }
 
 swap_to() { # retarget the floating :current tags + restart pod

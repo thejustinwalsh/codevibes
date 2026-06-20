@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Asserting codemod: applies CodeVibes production source edits to a checkout.
 # Usage: apply.sh [REPO_ROOT]   (default: .)  Idempotent. Fails if a target is absent.
-set -euo pipefail
+# POSIX-safe (set -eu, no pipefail) so it runs under bash, dash (CI `sh`), and
+# busybox ash (Alpine `RUN sh ...` in Dockerfile.web).
+set -eu
 ROOT="${1:-.}"
 
 # replace_once FILE LITERAL REPLACEMENT

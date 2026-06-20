@@ -125,3 +125,9 @@ Format per entry:
 5. **ghcr package visibility**: after the first CI build push, set both `codevibes-backend` and `codevibes-web` ghcr packages to **public** in package settings (one-time, required for anonymous pull — §5, §14.3 step 1).
 6. **wrangler version in CI**: confirm `.github/workflows/build.yml` pins or installs wrangler ≥4 so `[[secrets_store_secrets]]` is recognized during `wrangler deploy --dry-run` and the live deploy step.
 7. **`setAuthCookie` audit** (§8/§10 open confirmation): verify `src/utils/auth.ts` sets `Secure` + `SameSite=Lax` (or stricter) in production before first user login.
+
+## 2026-06-20 — First-deploy fixes (CI dash, no skopeo on box, first-deploy smoke)
+- **Context:** The first real build/deploy surfaced three breakages unit tests didn't catch: (1) `build.yml` and `Dockerfile.web` run `sh patches/apply.sh`, but `sh` is dash (CI) / busybox ash (Alpine), which reject `set -o pipefail`; (2) `deploy.sh` listed tags via `skopeo`, which cloud-init never installs; (3) the smoke test required a pre-existing DB (read-only mount, `fileMustExist`), impossible on first deploy → chicken-and-egg.
+- **Decision:** (1) `apply.sh` → `set -eu` (POSIX; verified under dash). (2) `deploy.sh` lists tags via the ghcr REST API with curl+jq (already installed; works for public images, no skopeo). (3) smoke test boots the candidate backend against the real RW volume with the real podman secrets and polls `/api/health` — first-deploy-safe, still catches broken mount/corrupt DB. `deploy.bats` updated to mock curl/jq.
+- **Affected:** `patches/apply.sh`, `deploy/deploy.sh`, `deploy/tests/deploy.bats`.
+- **Revisit:** none — verified via bats + dash run; CI build confirms the Alpine path.

@@ -1,23 +1,34 @@
 #!/usr/bin/env bats
 setup() {
   TMP="$(mktemp -d)"; BIN="$TMP/bin"; mkdir -p "$BIN" "$TMP/state"
-  # mock skopeo: report a newer tag
-  cat > "$BIN/skopeo" <<'EOF'
+  # mock curl: ghcr token endpoint + tags/list endpoint (report a newer tag)
+  cat > "$BIN/curl" <<'EOF'
 #!/usr/bin/env bash
-echo '{"Tags":["v1.0.1","v1.0.2"]}'
+for a in "$@"; do case "$a" in
+  *ghcr.io/token*) echo '{"token":"t"}'; exit 0 ;;
+  *tags/list*) echo '{"tags":["v1.0.1","v1.0.2"]}'; exit 0 ;;
+esac; done
+exit 0
 EOF
-  # mock podman: log calls; succeed; health/db smoke "passes" via marker file
+  # mock jq: minimal — extract .token and .tags[]?
+  cat > "$BIN/jq" <<'EOF'
+#!/usr/bin/env bash
+in="$(cat)"
+case "$*" in
+  *.token*) echo "t" ;;
+  *.tags*) echo "v1.0.1"; echo "v1.0.2" ;;
+esac
+EOF
+  # mock podman: log calls; succeed
   cat > "$BIN/podman" <<'EOF'
 #!/usr/bin/env bash
 echo "podman $*" >> "$TMP_LOG"
 case "$1" in
-  run) exit 0 ;;
   tag) echo "tag $*" >> "$TMP_LOG"; exit 0 ;;
-  pull) exit 0 ;;
   *) exit 0 ;;
 esac
 EOF
-  chmod +x "$BIN/skopeo" "$BIN/podman"
+  chmod +x "$BIN/curl" "$BIN/jq" "$BIN/podman"
   export PATH="$BIN:$PATH" TMP_LOG="$TMP/calls.log"
   export DEPLOY_STATE_DIR="$TMP/state" DEPLOY_SMOKE_OVERRIDE=pass
 }
