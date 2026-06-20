@@ -234,10 +234,15 @@ In the Hetzner Cloud Console, click **Create Server**:
 Location:     Falkenstein (fsn1)
 Image:        Ubuntu 26.04
 Type:         CX22  (2 vCPU, 4 GB RAM, 40 GB NVMe)
+Public IP:    ENABLE IPv4 (GitHub & ghcr.io are IPv4-only — an IPv6-only box
+              cannot git clone or podman pull, so cloud-init would fail)
 SSH keys:     add your public key
 Cloud config: paste the contents of /tmp/cloud-init-codevibes.yaml
 Volumes:      attach codevibes-data (created in Step 8)
-Firewall:     create a new firewall — allow TCP 22 from <your static home IP> only; deny all else
+Firewall:     SSH is key-only + fail2ban (configured by cloud-init), so do NOT pin a
+              source IP (fragile behind iCloud Private Relay → lockout risk). If you
+              attach a Cloud Firewall: allow TCP 22 from 0.0.0.0/0 and ::/0, allow ICMP.
+              No other inbound ports are needed (the tunnel dials out).
 ```
 
 Click **Create & Buy now**. The server will boot and cloud-init will run.

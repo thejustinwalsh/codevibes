@@ -131,3 +131,9 @@ Format per entry:
 - **Decision:** (1) `apply.sh` → `set -eu` (POSIX; verified under dash). (2) `deploy.sh` lists tags via the ghcr REST API with curl+jq (already installed; works for public images, no skopeo). (3) smoke test boots the candidate backend against the real RW volume with the real podman secrets and polls `/api/health` — first-deploy-safe, still catches broken mount/corrupt DB. `deploy.bats` updated to mock curl/jq.
 - **Affected:** `patches/apply.sh`, `deploy/deploy.sh`, `deploy/tests/deploy.bats`.
 - **Revisit:** none — verified via bats + dash run; CI build confirms the Alpine path.
+
+## 2026-06-20 — SSH posture: key-only + fail2ban, no IP allow-list (+ PermitRootLogin fix)
+- **Context:** (1) cloud-init set `PermitRootLogin no` with no other key-bearing SSH user → would lock the box out once past the firewall. (2) The planned "Cloud Firewall → static home IP" SSH gate is fragile: the operator's egress IP is unstable behind iCloud Private Relay → lockout risk / mismatched-source drops (observed as a port-22 timeout).
+- **Decision:** Port 22 open, **key-only** (`PasswordAuthentication no`, `PermitRootLogin prohibit-password`), brute force throttled by **fail2ban** (sshd jail, maxretry 4, bantime 1h). No source-IP allow-list. Added `fail2ban` to packages + `/etc/fail2ban/jail.local` + `systemctl enable --now fail2ban`. Also documented that the server MUST have an IPv4 (GitHub/ghcr are IPv4-only).
+- **Affected:** `deploy/cloud-init.template.yaml`, spec §10/§11/§14.3, `docs/runbooks/setup.{md,html}`.
+- **Revisit:** optionally move SSH behind Cloudflare Access (cloudflared) later for true zero-open-ports.

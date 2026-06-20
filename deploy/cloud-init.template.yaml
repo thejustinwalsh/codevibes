@@ -1,6 +1,6 @@
 #cloud-config
 package_update: true
-packages: [podman, uidmap, slirp4netns, git, curl, jq, sqlite3, ufw]
+packages: [podman, uidmap, slirp4netns, git, curl, jq, sqlite3, ufw, fail2ban]
 users:
   - name: codevibes
     shell: /bin/bash
@@ -18,14 +18,29 @@ write_files:
     content: |
       CF_SERVICE_TOKEN_ID=__CF_SERVICE_TOKEN_ID__
       CF_SERVICE_TOKEN_SECRET=__CF_SERVICE_TOKEN_SECRET__
+  # SSH posture: port open to the world, KEY-ONLY (passwords off), root via key only,
+  # brute-force throttled by fail2ban. No source-IP allow-list (fragile behind
+  # iCloud Private Relay / changing egress IPs).
+  - path: /etc/fail2ban/jail.local
+    content: |
+      [sshd]
+      enabled = true
+      mode = aggressive
+      maxretry = 4
+      findtime = 10m
+      bantime = 1h
 runcmd:
   - systemctl restart systemd-journald
   - ufw --force default deny incoming
   - ufw --force default allow outgoing
   - ufw --force allow OpenSSH
   - ufw --force enable
-  - sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/;s/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+  # Key-only SSH. PermitRootLogin=prohibit-password keeps key-based root (Hetzner's
+  # access model) working while disabling password root login. Do NOT use "no" —
+  # there is no other key-bearing SSH user, so "no" locks the box out.
+  - sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/;s/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
   - systemctl reload ssh || systemctl reload sshd || true
+  - systemctl enable --now fail2ban
   - loginctl enable-linger codevibes
   # mount the detachable data volume idempotently (never reformat existing data)
   - mkdir -p /mnt/codevibes-data

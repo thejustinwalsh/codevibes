@@ -230,7 +230,7 @@ Alternatives:
 All prior open items are now decided:
 
 - **`ENCRYPTION_KEY` / `JWT_SECRET`:** fetch-only, never regenerated; `ENCRYPTION_KEY` is permanent/immutable (data-loss risk — see §12 warning).
-- **SSH exposure:** Hetzner **Cloud Firewall** restricts port 22 to Justin's static home IP; key-only, no root, no passwords (§11).
+- **SSH exposure:** port 22 open, **key-only** (`PasswordAuthentication no`, `PermitRootLogin prohibit-password`), brute-force throttled by **fail2ban**. No source-IP allow-list — Justin's egress IP is unstable behind iCloud Private Relay, so IP-pinning is fragile and risks lockout (§11). (`PermitRootLogin no` was rejected: there is no other key-bearing SSH user, so it would lock the box out entirely.)
 - **CORS:** tighten the backend to reject origins outside `ALLOWED_ORIGINS` in production (§8 item 1b). Safe for GitHub (CORS is browser-only).
 - **Tunnel:** **locally-configured** (`config.yml` + credential in repo/secret), ingress in version control.
 - **Secrets storage:** Cloudflare **Secrets Store** (§12).
@@ -258,7 +258,7 @@ Responsibilities:
 
 1. **Packages** — `apt` install `podman`, `uidmap`, `slirp4netns` (rootless networking), `git`, `curl`, `ufw`. No host `cloudflared` (it runs as a pod container).
 2. **Deploy user** — create unprivileged `codevibes` user; ensure `/etc/subuid` and `/etc/subgid` ranges exist for rootless Podman; `loginctl enable-linger codevibes` so its systemd user units start at boot without a login session.
-3. **Firewall / SSH hardening** — `ufw` default deny incoming / allow outgoing. SSH (port 22) is restricted at the **network layer by a Hetzner Cloud Firewall** to Justin's static home IP only (he pays for a fixed public IP that will not change); `ufw` allows `OpenSSH` but the Cloud Firewall is the real gate. `sshd`: disable root login, disable password auth, key-only. No other inbound ports (the tunnel dials out).
+3. **Firewall / SSH hardening** — `ufw` default deny incoming / allow outgoing, `ufw allow OpenSSH`. SSH (port 22) is **open to the world but key-only** (`sshd`: `PasswordAuthentication no`, `PermitRootLogin prohibit-password` — keeps Hetzner's key-based root working; **not** `no`, which would lock out the only SSH-capable account), with **fail2ban** throttling brute force. **No source-IP allow-list**: Justin's egress is unstable behind iCloud Private Relay, so a Cloud Firewall pinned to a home IP is fragile and risks lockout. The app needs no other inbound ports (the tunnel dials out); a Hetzner Cloud Firewall, if used, should allow 22 from anywhere (or be skipped) and rely on keys + fail2ban.
 4. **Log caps** — write `/etc/systemd/journald.conf.d/00-codevibes.conf` with `SystemMaxUse=500M` (and a sane `MaxRetentionSec`).
 5. **Mount the data volume** — detect the attached Hetzner Volume by its stable `/dev/disk/by-id/scsi-0HC_Volume_<id>` path; if unformatted, `mkfs.ext4`; mount at `/mnt/codevibes-data` via an `/etc/fstab` entry (idempotent — existing data on a reattached volume is preserved, never reformatted). The podman `codevibes-data` volume binds here (see §13).
 6. **Bootstrap the repo + units** — as `codevibes`: clone the fork's `production` branch into `~/codevibes`, install the Quadlet units into `~/.config/containers/systemd/`, install the deploy timer + service and the weekly image-prune timer, `systemctl --user daemon-reload`.
@@ -350,7 +350,7 @@ Enabling Secrets Store for the first time: use the account's **single default Wo
 Full first-time setup in dependency order, with copy-pasteable commands and explicit "you should see X" checkpoints. References §14.1 and §14.2 for the two Cloudflare pieces rather than duplicating them:
 1. **GitHub** — create the public fork; register the GitHub **OAuth App** (callback `https://codevibes.tjw.dev/api/auth/callback`); after the first build, set the two ghcr packages' visibility to **public** (one-time, in package settings). No pull token needed.
 2. **Cloudflare** — complete §14.1 (Zero Trust) and §14.2 (Secrets) ; create the **Tunnel** (locally-configured `config.yml`), store its credential in Secrets Store, point ingress at the app; DNS for `codevibes.tjw.dev` and `secrets.tjw.dev`.
-3. **Hetzner** — create the **Volume**; render cloud-init via `deploy/gen-cloud-init.sh`; create the **CX22 / Ubuntu 26.04 / Falkenstein** server, attach the volume, set the **Cloud Firewall** (SSH → your static IP only), paste the rendered cloud-init.
+3. **Hetzner** — create the **Volume**; render cloud-init via `deploy/gen-cloud-init.sh`; create the **CX22 / Ubuntu 26.04 / Falkenstein** server **with an IPv4** (GitHub/ghcr are IPv4-only — an IPv6-only box can't clone or pull), attach the volume, paste the rendered cloud-init. SSH is key-only + fail2ban (no IP allow-list); leave any Cloud Firewall's port 22 open to all or skip it.
 4. **First deploy + verification** — watch cloud-init complete; confirm the pod is up (`systemctl --user status`), the smoke test (`/api/health` + DB-touch) passes, the site loads through Access, and GitHub OAuth login + a private-repo analysis succeed end to end. Diagram: full system topology (Hetzner pod + volume, Cloudflare edge, GitHub/DeepSeek/ghcr).
 
 ### 14.4 `recovery.html` — manual re-deploy / recovery
