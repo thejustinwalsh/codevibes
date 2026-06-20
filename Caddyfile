@@ -1,0 +1,16 @@
+{
+	admin off
+	auto_https off
+}
+
+:80 {
+	encode gzip
+	handle /api/* {
+		reverse_proxy localhost:3001
+	}
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

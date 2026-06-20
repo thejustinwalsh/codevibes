@@ -1,44 +1,24 @@
 # Build stage
 FROM node:20-alpine AS builder
-
 WORKDIR /app
-
-# Copy package files
+# better-sqlite3 compiles a native binding under musl — needs a toolchain.
+RUN apk add --no-cache python3 make g++
 COPY package*.json ./
-
-# Install dependencies
 RUN npm ci
-
-# Copy source code
 COPY . .
-
-# Build TypeScript
 RUN npm run build
+# Drop dev deps but keep the compiled native module for the final stage.
+RUN npm prune --omit=dev
 
-# Production stage
+# Production stage (no toolchain; reuse the builder's compiled node_modules)
 FROM node:20-alpine AS production
-
 WORKDIR /app
-
-# Copy package files
-COPY package*.json ./
-
-# Install production dependencies only
-RUN npm ci --only=production
-
-# Copy built files
-COPY --from=builder /app/dist ./dist
-
-# Set environment
 ENV NODE_ENV=production
 ENV PORT=3001
-
-# Expose port
+COPY package*.json ./
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
 EXPOSE 3001
-
-# Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:3001/api/health || exit 1
-
-# Start server
 CMD ["node", "dist/server.js"]

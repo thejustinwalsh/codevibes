@@ -1,0 +1,17 @@
+# Build the SPA with the production API origin baked in.
+FROM node:20-alpine AS builder
+WORKDIR /app
+ARG VITE_API_URL=https://codevibes.tjw.dev
+ENV VITE_API_URL=$VITE_API_URL
+COPY package*.json ./
+RUN npm ci
+COPY . .
+# Apply the production codemod before building (idempotent; asserts targets).
+RUN sh patches/apply.sh .
+RUN npm run build
+
+# Serve static SPA + reverse-proxy /api via Caddy.
+FROM caddy:2-alpine AS production
+COPY Caddyfile /etc/caddy/Caddyfile
+COPY --from=builder /app/dist /srv
+EXPOSE 80
