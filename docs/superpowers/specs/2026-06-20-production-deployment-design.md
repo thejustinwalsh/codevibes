@@ -76,7 +76,7 @@ Podman **pod** `codevibes` (containers share the pod's localhost):
 | `cloudflared`| `cloudflare/cloudflared`           | Tunnel; ingress points at `caddy:80`. No published host ports anywhere in the pod. |
 
 Persistence:
-- Named volume `codevibes-data` → backend `/app/data` (SQLite DB + nothing else durable).
+- Podman volume `codevibes-data` → backend `/app/data` (SQLite DB + nothing else durable). The podman volume is **backed by a detachable Hetzner Volume** mounted on the host (see §13), so the DB survives VM replacement.
 - Tunnel credentials and the Access/tunnel config provided to `cloudflared` via mounted secret.
 
 ### Supervision — Quadlet + systemd
@@ -242,8 +242,9 @@ Responsibilities:
 2. **Deploy user** — create unprivileged `codevibes` user; ensure `/etc/subuid` and `/etc/subgid` ranges exist for rootless Podman; `loginctl enable-linger codevibes` so its systemd user units start at boot without a login session.
 3. **Firewall / SSH hardening** — `ufw` default deny incoming / allow outgoing; allow only `OpenSSH` (so we are not locked out). `sshd`: disable root login, disable password auth, key-only.
 4. **Log caps** — write `/etc/systemd/journald.conf.d/00-codevibes.conf` with `SystemMaxUse=500M` (and a sane `MaxRetentionSec`).
-5. **Bootstrap the repo + units** — as `codevibes`: clone the fork's `production` branch into `~/codevibes`, install the Quadlet units into `~/.config/containers/systemd/`, install the deploy timer + service and the weekly image-prune timer, `systemctl --user daemon-reload`.
-6. **Service-token handoff** — write the Cloudflare Access **service token** (the single bootstrap credential, supplied via cloud-init variables) to a root-owned `0600` file at `/etc/codevibes/cf-service-token.env`, then invoke the secrets fetch (§12) and the first deploy.
+5. **Mount the data volume** — detect the attached Hetzner Volume by its stable `/dev/disk/by-id/scsi-0HC_Volume_<id>` path; if unformatted, `mkfs.ext4`; mount at `/mnt/codevibes-data` via an `/etc/fstab` entry (idempotent — existing data on a reattached volume is preserved, never reformatted). The podman `codevibes-data` volume binds here (see §13).
+6. **Bootstrap the repo + units** — as `codevibes`: clone the fork's `production` branch into `~/codevibes`, install the Quadlet units into `~/.config/containers/systemd/`, install the deploy timer + service and the weekly image-prune timer, `systemctl --user daemon-reload`.
+7. **Service-token handoff** — write the Cloudflare Access **service token** (the single bootstrap credential, supplied via cloud-init variables) to a root-owned `0600` file at `/etc/codevibes/cf-service-token.env`, then invoke the secrets fetch (§12) and the first deploy.
 
 What cloud-init deliberately does **not** contain: any app secret beyond the single Access service token. Everything else is fetched at boot from Cloudflare.
 
@@ -293,3 +294,45 @@ Deliverables: `deploy/cloud-init.template.yaml`, `deploy/gen-cloud-init.sh`, `de
 Introduces and requires maintaining a small broker Worker plus a second Access policy (service-token rule). Accepted because resilience was an explicit goal and the stack is already all-in on Cloudflare (tunnel + Access), so no new vendor is added.
 
 Deliverables: `secrets-broker/` (Worker source + `wrangler.toml`), `deploy/fetch-secrets.sh`, `deploy/bootstrap-secrets.sh` (SSH fallback).
+
+---
+
+## 13. Data resilience — detachable Hetzner Volume
+
+The SQLite DB is the only **non-reconstructible** state in the system (users, analysis history, AES-encrypted GitHub/DeepSeek tokens). Images, secrets, and config are all rebuildable from CI + Cloudflare; the DB is not. So it lives on storage decoupled from the VM lifecycle.
+
+- A **Hetzner Cloud Volume** (minimum 10 GB, ~€0.44/mo; the DB is megabytes, so size is a non-issue) is attached to the server and mounted at `/mnt/codevibes-data`. The podman `codevibes-data` volume binds there; the backend writes `data/codevibes.db` onto it.
+- **Move/resize/rebuild a box:** detach the volume from the old VM, attach to the new one; cloud-init detects the existing filesystem and mounts it **without reformatting**, so the DB is intact. Combined with the secrets-broker flow, both compute and data are now cattle.
+- **SQLite safety on a Volume:** a Hetzner Volume is block storage formatted ext4 and mounted on a single host, so SQLite file locking behaves exactly as on local disk. (The known SQLite hazard is network *filesystems* like NFS, which this is not.) WAL mode is fine.
+- **Backup (defense in depth):** a Volume survives VM loss but not DB corruption or accidental deletion. A nightly systemd timer runs `sqlite3 codevibes.db ".backup"` to a timestamped file on the volume, retaining the last N. Optional future enhancement: ship that dump offsite (e.g. Cloudflare R2) for off-box durability.
+
+Deliverable: volume mount handled in `deploy/cloud-init.template.yaml` (§11 step 5); nightly backup timer in `deploy/`.
+
+---
+
+## 14. Runbooks (single-file HTML)
+
+Two **self-contained HTML** documents (inline CSS, no external dependencies) so they render offline and print cleanly — important because the recovery runbook may be read precisely when the service is down. Authored in markdown under `docs/runbooks/` and rendered to standalone HTML by a small build step.
+
+### 14.1 Initial setup runbook — `docs/runbooks/setup.html`
+End-to-end first-time setup, in dependency order, with copy-pasteable commands and explicit "you should see X" checkpoints:
+
+1. **DNS / Cloudflare zone** — `tjw.dev` zone; records for `codevibes.tjw.dev` (app) and `secrets.tjw.dev` (broker).
+2. **GitHub** — create the private fork; register the GitHub **OAuth App** (callback `https://codevibes.tjw.dev/api/auth/callback`); create a ghcr.io **read-only pull token**.
+3. **Cloudflare Secrets Store + broker Worker** — store the app secrets; deploy `secrets-broker/`; bind secrets.
+4. **Cloudflare Access** — (a) human policy gating `codevibes.tjw.dev` to Justin; (b) **service-token** + policy gating `secrets.tjw.dev`.
+5. **Cloudflare Tunnel** — create the tunnel; record the credential into Secrets Store; ingress → app.
+6. **Hetzner** — create the **Volume**; render cloud-init via `deploy/gen-cloud-init.sh`; create the **CX22 / Ubuntu 24.04** server, attach the volume, paste the rendered cloud-init.
+7. **First deploy + verification** — watch cloud-init complete; confirm the pod is up (`systemctl --user status`), `/api/health` passes, the site loads through Access, and GitHub OAuth login + a private-repo analysis succeed end to end.
+
+### 14.2 Recovery / manual re-deploy runbook — `docs/runbooks/recovery.html`
+For when automated smoke-test + rollback did **not** save you:
+
+1. **Triage** — SSH in; `systemctl --user status`, `podman ps -a`, `journalctl --user -u` for the failing unit; check `/api/health`.
+2. **Manual rollback to a known-good tag** — find the last-known-good tag (state file on the volume / ghcr tag list); point the Quadlet unit at it; `daemon-reload` + restart; re-verify health.
+3. **Re-fetch secrets** — if failure is secret-related, re-run `deploy/fetch-secrets.sh`; verify podman secrets and `podman login ghcr.io`.
+4. **Volume reattach / box replacement** — detach the Hetzner Volume, spin a fresh VM from cloud-init, attach the volume; verify the DB mounted intact and unreformatted.
+5. **Restore from backup** — if the DB itself is corrupt, stop the backend, restore the latest `.backup` file from the volume, restart, verify.
+6. **Escalation notes** — how to fully tear down and rebuild from scratch using the setup runbook, with the volume preserving data.
+
+Deliverables: `docs/runbooks/setup.md` + `setup.html`, `docs/runbooks/recovery.md` + `recovery.html`, and the markdown→HTML render step.
