@@ -7,6 +7,11 @@ compatibility_flags = ["nodejs_compat"]
 # filled during setup — see cloudflare-secrets runbook). Requires wrangler >=4 with
 # Secrets Store GA support; the blocks below are the correct shape.
 #
+# store_id is your account's SINGLE default Workers Secrets Store (one store / 100
+# secrets per account — you cannot create more, and 5 secrets is well within budget).
+# Get it from the dashboard or `wrangler secrets-store store list`. All five bindings
+# share that same store_id.
+#
 # [[secrets_store_secrets]]
 # binding = "JWT_SECRET"
 # store_id = "REPLACE_STORE_ID"

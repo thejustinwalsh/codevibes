@@ -14,19 +14,21 @@
 
 ---
 
-## Part 1 — Enable Cloudflare Secrets Store and create the store
+## Part 1 — Use your account's default Secrets Store
 
-**Step 1.** Log in to the [Cloudflare dashboard](https://dash.cloudflare.com). Navigate to **Workers & Pages > Secrets Store** (or the Cloudflare API; the dashboard UI is easier for initial setup).
+> Cloudflare gives each account **one** Secrets Store (scoped to Workers) with up to **100 secrets** — you cannot create additional stores, and you do not need to. We use the default store and add our 5 secrets to it (well under the 100 limit).
 
-> If Secrets Store is not yet visible, it may be under **Beta** features. Enable it for your account.
+**Step 1.** Log in to the [Cloudflare dashboard](https://dash.cloudflare.com). Navigate to **Workers & Pages > Secrets Store**. You should see the default store already present.
 
-**Step 2.** Create a new store:
+> If Secrets Store is not yet visible, it may be under **Beta** features. Enable it for your account; the default store appears once enabled.
 
+**Step 2.** Record the **Store ID** of the default store — you will need it for every binding in Step 5/7. From the dashboard, copy the store ID shown on the store's page, or via wrangler:
+
+```bash
+npx wrangler secrets-store store list   # requires wrangler >=4; copy the default store's id
 ```
-Store name:  codevibes-secrets
-```
 
-Click **Create**. Note the **Store ID** — you will need it in Step 7.
+Do **not** try to create a second store (the account allows only one).
 
 ---
 
@@ -53,7 +55,7 @@ For `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`: these come from the GitHub OA
 
 For `TUNNEL_CRED`: this is the tunnel credential JSON file produced when you create the Cloudflare Tunnel (see the setup runbook, Cloudflare section). It will look like `{"AccountTag":"...","TunnelID":"...","TunnelSecret":"..."}`.
 
-**Step 4.** In the Cloudflare dashboard **Secrets Store > codevibes-secrets**, add each secret:
+**Step 4.** In the Cloudflare dashboard **Secrets Store** (the default store), add each secret:
 
 | Secret name | Value | Notes |
 |---|---|---|
