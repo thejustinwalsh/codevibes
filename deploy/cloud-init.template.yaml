@@ -33,7 +33,7 @@ runcmd:
   - systemctl restart systemd-journald
   - ufw --force default deny incoming
   - ufw --force default allow outgoing
-  - ufw --force allow OpenSSH
+  - ufw --force allow 22/tcp
   - ufw --force enable
   # Key-only SSH. PermitRootLogin=prohibit-password keeps key-based root (Hetzner's
   # access model) working while disabling password root login. Do NOT use "no" —
