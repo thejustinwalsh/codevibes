@@ -45,3 +45,5 @@ codevibes-backend/data/*.db
 codevibes-backend/data/*.db-wal
 codevibes-backend/data/*.db-shm
 codevibes-backend/data/*.sqlite*
+deploy/cloudflared/*.json
+deploy/cloudflared/cred*

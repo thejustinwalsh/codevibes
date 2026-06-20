@@ -2,6 +2,9 @@ name = "codevibes-secrets-broker"
 main = "src/index.ts"
 compatibility_date = "2024-11-01"
 compatibility_flags = ["nodejs_compat"]
+routes = [
+  { pattern = "secrets.tjw.dev/*", zone_name = "tjw.dev" }
+]
 
 # Production: bind each secret from Cloudflare Secrets Store (store_id + secret_name
 # filled during setup — see cloudflare-secrets runbook). Requires wrangler >=4 with
@@ -12,30 +15,31 @@ compatibility_flags = ["nodejs_compat"]
 # Get it from the dashboard or `wrangler secrets-store store list`. All five bindings
 # share that same store_id.
 #
-# [[secrets_store_secrets]]
-# binding = "JWT_SECRET"
-# store_id = "REPLACE_STORE_ID"
-# secret_name = "codevibes-jwt-secret"
-#
-# [[secrets_store_secrets]]
-# binding = "ENCRYPTION_KEY"
-# store_id = "REPLACE_STORE_ID"
-# secret_name = "codevibes-encryption-key"
-#
-# [[secrets_store_secrets]]
-# binding = "GITHUB_CLIENT_ID"
-# store_id = "REPLACE_STORE_ID"
-# secret_name = "codevibes-github-client-id"
-#
-# [[secrets_store_secrets]]
-# binding = "GITHUB_CLIENT_SECRET"
-# store_id = "REPLACE_STORE_ID"
-# secret_name = "codevibes-github-client-secret"
-#
-# [[secrets_store_secrets]]
-# binding = "TUNNEL_CRED"
-# store_id = "REPLACE_STORE_ID"
-# secret_name = "codevibes-tunnel-cred"
+[[secrets_store_secrets]]
+binding = "JWT_SECRET"
+store_id = "a82a58437ef14b80bcba87a7d5589377"
+secret_name = "codevibes-jwt-secret"
+
+[[secrets_store_secrets]]
+binding = "ENCRYPTION_KEY"
+store_id = "a82a58437ef14b80bcba87a7d5589377"
+secret_name = "codevibes-encryption-key"
+
+[[secrets_store_secrets]]
+binding = "GITHUB_CLIENT_ID"
+store_id = "a82a58437ef14b80bcba87a7d5589377"
+secret_name = "codevibes-github-client-id"
+
+[[secrets_store_secrets]]
+binding = "GITHUB_CLIENT_SECRET"
+store_id = "a82a58437ef14b80bcba87a7d5589377"
+secret_name = "codevibes-github-client-secret"
+
+[[secrets_store_secrets]]
+binding = "TUNNEL_CRED"
+store_id = "a82a58437ef14b80bcba87a7d5589377"
+secret_name = "codevibes-tunnel-cred"
+
 
 # NOTE: no [vars] here on purpose. `[vars]` would be deployed to the Worker as
 # PLAINTEXT env vars and committed to git — a leak trap, and it would collide with
