@@ -27,3 +27,21 @@ Format per entry:
 - **Decision:** Installed unit-tier tools via Homebrew (bats-core, shellcheck, yamllint, hadolint, actionlint). Provision an OrbStack Ubuntu machine for podman/quadlet verification (`quadlet -dryrun`, WS-C). arm64 vs x86 means local builds are functional smoke only; CI (x86) is authoritative.
 - **Affected:** WS-C verification; Phase 3 L2/L3.
 - **Revisit:** confirm the exact Ubuntu version available in OrbStack (26.04, else 24.04 fallback) when WS-C verification runs.
+
+## 2026-06-20 — Quadlet dry-run invocation (WS-C, Makefile)
+- **Context:** The plan's `quadlet -dryrun -user <dir>` invocation is wrong — `-user` is a boolean and quadlet does not accept a directory argument, so it scanned default dirs and parsed nothing. Verified in the OrbStack Ubuntu machine.
+- **Decision:** Use `QUADLET_UNIT_DIRS=<dir> quadlet -dryrun -user`. Updated `deploy/tests/quadlet.bats` (test 5 now also `skip`s when the quadlet binary is absent, so it passes on macOS and truly runs on Linux) and the `Makefile` `verify-quadlet` target. Verified: dry-run exits 0 and generates 19 units with no warnings in OrbStack.
+- **Affected:** `deploy/tests/quadlet.bats`, `Makefile`.
+- **Revisit:** none — verified on Linux.
+
+## 2026-06-20 — Bind-volume unit options bug (WS-C)
+- **Context:** The dry-run revealed `codevibes-data.volume` produced a malformed `podman volume create` (`--opt o=type=none,o=bind`) because `type=none` was crammed into `Options=`.
+- **Decision:** Use the proper quadlet keys `Type=none` + `Options=bind` (+ `Device=`). Re-verified: ExecStart is now `--opt device=/mnt/codevibes-data --opt type=none --opt o=bind`, dry-run exit 0.
+- **Affected:** `deploy/quadlet/codevibes-data.volume`.
+- **Revisit:** confirm the bind volume actually mounts at runtime during Phase 3 L3 (live pod smoke).
+
+## 2026-06-20 — backup.sh prune uses find, not ls (WS-D)
+- **Context:** The plan's `backup.sh` pruned with `ls -1t … | tail | xargs`, which shellcheck flags (SC2012).
+- **Decision:** WS-D agent replaced it with a `find -printf '%T@ %p' | sort -rn | tail -n +8 | cut | xargs` pipeline — identical semantics, shellcheck-clean.
+- **Affected:** `deploy/backup.sh`.
+- **Revisit:** none — behavior equivalent, retains last 7.
