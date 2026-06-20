@@ -32,7 +32,7 @@
 - **Cloudflare Tunnel (`cloudflared`)** — a container in the pod that dials *out* to Cloudflare and serves `codevibes.tjw.dev`. The server needs no public inbound ports; the firewall can deny all inbound.
 - **Cloudflare Access** — the Zero Trust identity gate. An Access application policy restricts `codevibes.tjw.dev` to Justin's identity (email / GitHub login via Cloudflare's IdP). This is the *outer* auth layer; the app's own GitHub OAuth is the *inner* layer.
 
-No Workers script is involved.
+No Workers script sits **in the request path** of the app. A small **out-of-band** secrets-broker Worker is used only for boot-time secret delivery (see §12); it never fronts `codevibes.tjw.dev`.
 
 ---
 
@@ -201,7 +201,9 @@ All minor:
 4. `codevibes-backend/Dockerfile` builder stage: add `python3 make g++` for `better-sqlite3`.
 5. New files: `Dockerfile.web`, `Caddyfile`, Quadlet units, `deploy/deploy.sh`, systemd timer units, `.github/workflows/sync.yml`, `.github/workflows/build.yml`, `patches/apply.sh`.
 
-Secrets handling: cookie auth requires `Secure`/`SameSite` behavior consistent with HTTPS single-origin; verify `setAuthCookie` in `src/utils/auth.ts` sets `Secure` + `SameSite=Lax` (or stricter) in production. (To confirm during implementation.)
+Secrets are delivered at boot/deploy via the Cloudflare secrets-broker flow (§12) and materialized as **podman secrets** — never committed env files.
+
+Cookie auth requires `Secure`/`SameSite` behavior consistent with HTTPS single-origin; verify `setAuthCookie` in `src/utils/auth.ts` sets `Secure` + `SameSite=Lax` (or stricter) in production. (To confirm during implementation.)
 
 ---
 
@@ -223,6 +225,71 @@ Alternatives:
 ## 10. Open items to resolve during implementation
 
 - Confirm `setAuthCookie` production cookie flags (`Secure`, `SameSite`) for the single-origin HTTPS setup.
-- Decide exact ghcr.io image names and visibility (private packages; server pulls with a read-only token / `GITHUB_TOKEN`-scoped PAT in a podman secret).
+- Decide exact ghcr.io image names and visibility (private packages; the ghcr read-only pull token is one of the secrets delivered via §12).
 - Tunnel provisioning method: remotely-managed tunnel (config in Cloudflare dashboard) vs locally-configured tunnel (`config.yml` + credentials file mounted into `cloudflared`). Locally-configured keeps ingress in version control; lean that way.
-- Cloudflare Access application + policy definition (identity = Justin) — created in the Zero Trust dashboard; document the steps.
+- Cloudflare Access applications + policies: (a) the human policy gating `codevibes.tjw.dev` to Justin, and (b) the service-token policy gating the secrets-broker route (§12) — both created in the Zero Trust dashboard; document the steps.
+- Secrets-broker Worker storage choice: Cloudflare **Secrets Store** (account-level, binding-consumed) vs plain **Worker secrets** (`wrangler secret put`). Lean Secrets Store for central rotation; confirm during implementation.
+
+---
+
+## 11. Cloud-init provisioning
+
+A single cloud-init `user-data` document (well under Hetzner's 32 KiB limit) turns a bare **Ubuntu 24.04 x86** VM into a host ready to run the pod on first boot, with no manual host setup. It performs **non-secret host prep only**; secrets arrive via §12.
+
+Responsibilities:
+
+1. **Packages** — `apt` install `podman`, `uidmap`, `slirp4netns` (rootless networking), `git`, `curl`, `ufw`. No host `cloudflared` (it runs as a pod container).
+2. **Deploy user** — create unprivileged `codevibes` user; ensure `/etc/subuid` and `/etc/subgid` ranges exist for rootless Podman; `loginctl enable-linger codevibes` so its systemd user units start at boot without a login session.
+3. **Firewall / SSH hardening** — `ufw` default deny incoming / allow outgoing; allow only `OpenSSH` (so we are not locked out). `sshd`: disable root login, disable password auth, key-only.
+4. **Log caps** — write `/etc/systemd/journald.conf.d/00-codevibes.conf` with `SystemMaxUse=500M` (and a sane `MaxRetentionSec`).
+5. **Bootstrap the repo + units** — as `codevibes`: clone the fork's `production` branch into `~/codevibes`, install the Quadlet units into `~/.config/containers/systemd/`, install the deploy timer + service and the weekly image-prune timer, `systemctl --user daemon-reload`.
+6. **Service-token handoff** — write the Cloudflare Access **service token** (the single bootstrap credential, supplied via cloud-init variables) to a root-owned `0600` file at `/etc/codevibes/cf-service-token.env`, then invoke the secrets fetch (§12) and the first deploy.
+
+What cloud-init deliberately does **not** contain: any app secret beyond the single Access service token. Everything else is fetched at boot from Cloudflare.
+
+### Generation workflow
+
+The committed file is a **template**, not the final document. You generate the paste-ready output locally:
+
+1. `deploy/cloud-init.template.yaml` is checked into the repo (no secrets).
+2. `deploy/gen-cloud-init.sh` reads the template plus per-server values — the Access **service-token** ID/secret and any host vars (hostname, fork repo URL, branch) — from a local untracked `deploy/cloud-init.vars` (or env vars) and renders the final document to stdout / `cloud-init.out.yaml`. The script also asserts the output is **< 32 KiB** (Hetzner's limit) and validates basic YAML.
+3. You **paste the rendered output into Hetzner's "Cloud config" / user-data box** in the server creation flow. First boot does the rest.
+
+The rendered `cloud-init.out.yaml` is **git-ignored** (it carries the service token); only the template and generator are committed.
+
+Deliverables: `deploy/cloud-init.template.yaml`, `deploy/gen-cloud-init.sh`, `deploy/cloud-init.vars.example`.
+
+---
+
+## 12. Secrets management — Cloudflare service token + broker Worker
+
+**Chosen approach.** Secrets live in Cloudflare and are fetched at boot/deploy by the server; the server holds only a single, scoped, revocable bootstrap credential. The one-time SSH script (`bootstrap-secrets.sh`) is retained as a documented **fallback** for when the broker is unreachable at boot.
+
+### Components
+
+- **Secrets-broker Worker** (out-of-band; not in the app request path). A small Worker that, on an authenticated request, returns the app secrets as JSON. Secret *values* are held outside the Worker code — via a **Secrets Store** binding (preferred) or Worker secrets — and read at request time (`env.JWT_SECRET.get()`).
+- **Cloudflare Access service token** — a machine credential (client-ID / client-secret pair). An Access policy on the broker route (`secrets.tjw.dev`) accepts **only** this service token. The server authenticates with `CF-Access-Client-Id` / `CF-Access-Client-Secret` headers.
+
+### Secrets delivered
+
+`JWT_SECRET`, `ENCRYPTION_KEY` (32 chars), `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, the **ghcr.io read-only pull token**, and the **Cloudflare Tunnel credential** for `cloudflared`.
+
+### Flow
+
+1. cloud-init places the service token at `/etc/codevibes/cf-service-token.env` (`0600`).
+2. `deploy/fetch-secrets.sh` calls `https://secrets.tjw.dev/...` with the two `CF-Access-Client-*` headers; Access validates the service token and passes the request to the broker Worker.
+3. The script writes each returned value directly into a **podman secret** (`podman secret create`), then `podman login ghcr.io` using the pull token. No secret is persisted to disk in plaintext beyond the transient fetch; the service-token file is the only at-rest credential.
+4. The Quadlet `backend` and `cloudflared` units reference podman secrets (`Secret=` directives) rather than env files.
+
+### Why this shape
+
+- **Reprovision** = re-run from just the service token; the box re-fetches everything. Cattle, not pets.
+- **Rotate** a secret once in Cloudflare; the next reboot/deploy picks it up.
+- **Revoke** the one service token to instantly cut off a suspected-compromised box.
+- Blast radius of the plaintext cloud-init credential drops from "every app secret" to "one narrow, revocable token."
+
+### Tradeoff (accepted)
+
+Introduces and requires maintaining a small broker Worker plus a second Access policy (service-token rule). Accepted because resilience was an explicit goal and the stack is already all-in on Cloudflare (tunnel + Access), so no new vendor is added.
+
+Deliverables: `secrets-broker/` (Worker source + `wrangler.toml`), `deploy/fetch-secrets.sh`, `deploy/bootstrap-secrets.sh` (SSH fallback).
