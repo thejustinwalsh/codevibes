@@ -35,5 +35,12 @@ jobs:
           git fetch upstream --tags
           # Merge will fail the job (and email) on conflict — by design.
           git merge --no-edit "$TAG"
+          # Strip upstream-leaked SQLite WAL/SHM (contain upstream author data) if the
+          # merge reintroduced them; keep production clean. No-op if absent.
+          if git ls-files --error-unmatch codevibes-backend/data/codevibes.db-wal >/dev/null 2>&1 \
+             || git ls-files --error-unmatch codevibes-backend/data/codevibes.db-shm >/dev/null 2>&1; then
+            git rm -q --ignore-unmatch codevibes-backend/data/codevibes.db-wal codevibes-backend/data/codevibes.db-shm
+            git commit -q -m "chore: strip upstream-leaked SQLite WAL/SHM after sync"
+          fi
           git push origin production
           gh release create "$TAG" --repo "${{ github.repository }}" --title "$TAG" --notes "Synced from upstream $TAG"
