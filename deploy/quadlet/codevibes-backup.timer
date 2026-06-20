@@ -1,0 +1,7 @@
+[Unit]
+Description=Nightly CodeVibes DB backup
+[Timer]
+OnCalendar=*-*-* 03:30:00 America/Detroit
+Persistent=true
+[Install]
+WantedBy=timers.target

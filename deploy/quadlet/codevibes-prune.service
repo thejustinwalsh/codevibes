@@ -1,0 +1,5 @@
+[Unit]
+Description=CodeVibes weekly image prune (retain last 3 tags)
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/podman image prune -f

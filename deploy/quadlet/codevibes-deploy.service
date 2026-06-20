@@ -1,0 +1,5 @@
+[Unit]
+Description=CodeVibes daily deploy check
+[Service]
+Type=oneshot
+ExecStart=%h/codevibes/deploy/deploy.sh
