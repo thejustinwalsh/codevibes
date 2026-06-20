@@ -45,3 +45,14 @@ Format per entry:
 - **Decision:** WS-D agent replaced it with a `find -printf '%T@ %p' | sort -rn | tail -n +8 | cut | xargs` pipeline — identical semantics, shellcheck-clean.
 - **Affected:** `deploy/backup.sh`.
 - **Revisit:** none — behavior equivalent, retains last 7.
+
+## 2026-06-20 — Secrets-broker Worker test/lint plumbing (WS-E)
+- **Context:** Getting the broker Worker to test + lint hermetically under the installed toolchain (wrangler 3.114, eslint 9, @cloudflare/vitest-pool-workers 0.5) required several config adjustments not anticipated in the plan.
+- **Decisions (all confined to `secrets-broker/`):**
+  1. `wrangler.toml`: `[[secrets_store_secrets]]` blocks are **commented out** (not recognized by wrangler 3.x) with correct shape preserved for wrangler 4 / Secrets Store GA; tests use `[vars]` string stubs injected by vitest-pool-workers.
+  2. `wrangler.toml`: added `compatibility_flags = ["nodejs_compat"]` (required by vitest-pool-workers 0.5).
+  3. `src/index.ts`: `Env` binding type is `string | { get(): Promise<string> }` with a `resolve()` helper, so the same code runs against Secrets Store (`.get()`) in prod and `[vars]` strings in tests — no mock patching.
+  4. `vitest.config.ts`: override `css.postcss` with empty plugins so the parent project's tailwind `postcss.config.js` isn't loaded (it hung the runner).
+  5. Created `secrets-broker/eslint.config.js` (eslint 9 flat config) + added `@typescript-eslint/parser`/`-plugin` devDeps; removed the superseded `.eslintrc.json`. Needed because eslint 9 ignores legacy `.eslintrc.json` and the parent flat config pulls deps absent from the parent's node_modules.
+- **Affected:** `secrets-broker/{wrangler.toml,src/index.ts,vitest.config.ts,eslint.config.js,package.json}`.
+- **Revisit (IMPORTANT):** before production deploy, **uncomment and complete the `[[secrets_store_secrets]]` bindings** (fill `store_id` per the cloudflare-secrets runbook) and confirm the binding shape against the wrangler version in CI. The Worker won't serve real secrets until then.
