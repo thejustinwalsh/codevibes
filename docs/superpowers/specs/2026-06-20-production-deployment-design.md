@@ -30,7 +30,7 @@
 "Cloudflare Zero Trust" in this design = two products, both used:
 
 - **Cloudflare Tunnel (`cloudflared`)** — a container in the pod that dials *out* to Cloudflare and serves `codevibes.tjw.dev`. The server needs no public inbound ports; the firewall can deny all inbound.
-- **Cloudflare Access** — the Zero Trust identity gate. An Access application policy restricts `codevibes.tjw.dev` to Justin's identity (email / GitHub login via Cloudflare's IdP). This is the *outer* auth layer; the app's own GitHub OAuth is the *inner* layer.
+- **Cloudflare Access** — the Zero Trust identity gate. An Access application policy restricts `codevibes.tjw.dev` to Justin's identity (email / GitHub login via Cloudflare's IdP). This is the *outer* auth layer; the app's own GitHub OAuth is the *inner* layer. The Access **session duration is 30 days** to minimize re-login friction; the kill switch for a lost/stolen device is revoking the Access session (and, if needed, the service token) from the Zero Trust dashboard.
 
 No Workers script sits **in the request path** of the app. A small **out-of-band** secrets-broker Worker is used only for boot-time secret delivery (see §12); it never fronts `codevibes.tjw.dev`.
 
@@ -131,9 +131,9 @@ The server **never builds**. CI builds versioned images and pushes them to **Git
      - **caddy+SPA** — multi-stage: Node stage runs `npm ci && VITE_API_URL=https://codevibes.tjw.dev npm run build`; final stage is `caddy` with `dist/` copied to `/srv` and the Caddyfile in place.
 
 3. **Deploy** — pulled by the **server**, not pushed by CI.
-   - A **daily systemd timer** on the server runs `deploy.sh`, which:
+   - A **daily systemd timer** on the server runs `deploy.sh` at **04:00 America/Detroit** (ET; the timer uses a timezone-qualified `OnCalendar` so DST is handled — Ubuntu 24.04's systemd supports this). A bad deploy therefore lands during off-hours. The timer:
      1. Checks ghcr.io for a newer version tag than the running one.
-     2. If newer: pulls the new images, starts the new pod/containers **alongside** (or staged), and runs a **smoke test** against `/api/health` (the backend already exposes it; `Dockerfile` healthcheck hits `http://localhost:3001/api/health`).
+     2. If newer: pulls the new images, starts the new pod/containers **alongside** (or staged), and runs a **smoke test** = `/api/health` **plus a DB-touch read** (open the SQLite file on the volume and run one query). The DB-touch catches a broken volume mount or corrupt DB before it goes live, not just a dead HTTP port.
      3. If healthy within a timeout: swaps the Quadlet units to the new tag, reloads systemd, confirms health again, and records the new tag as **last-known-good**.
      4. If unhealthy: discards the new version, leaves last-known-good running, exits non-zero. (Optional: surface failures via the same GitHub Actions path by having the timer report status, or rely on local journald + a health endpoint check.)
    - Because deploy is a **daily local timer**, there is no inbound webhook surface — consistent with zero open ports.
@@ -190,7 +190,9 @@ If a merge conflicts (Tier 1 surprise) **or** a codemod assertion fails (Tier 2)
 All minor:
 
 1. `src/hooks/useAnalysis.ts:6` → origin-relative API base via the codemod (§6).
+1b. **CORS tightening** (codemod, asserted): `src/server.ts` currently falls back to `callback(null, true)` for unknown origins ("tighten in production" per its own comment). In production, reject origins not in `ALLOWED_ORIGINS`. Safe for GitHub: CORS is browser-only; GitHub Actions (server-to-server to ghcr), the OAuth token exchange (backend→github.com), and the OAuth callback (top-level browser redirect) are none of them CORS-checked.
 2. Build-time env: `VITE_API_URL=https://codevibes.tjw.dev` (frontend build).
+2b. `DEEPSEEK_MODEL=deepseek-chat` — the project's own recommended/default model ("faster, more reliable"; `deepseek-reasoner` is "slower, may timeout"). Per-user overridable in the UI.
 3. Backend env (via **podman secrets**, not committed env files):
    - `NODE_ENV=production`, `PORT=3001`
    - `ALLOWED_ORIGINS=https://codevibes.tjw.dev`
@@ -209,7 +211,7 @@ Cookie auth requires `Secure`/`SameSite` behavior consistent with HTTPS single-o
 
 ## 9. Hetzner sizing — CX22
 
-**Recommendation: Hetzner Cloud CX22** — 2 vCPU (shared, Intel/AMD x86), 4 GB RAM, 40 GB NVMe, ~€4.59/mo. Image: **Ubuntu 24.04 (x86)**.
+**Recommendation: Hetzner Cloud CX22** — 2 vCPU (shared, Intel/AMD x86), 4 GB RAM, 40 GB NVMe, ~€4.59/mo. Image: **Ubuntu 24.04 (x86)**. Location: **Falkenstein (fsn1)** — chosen as the cheapest; latency is irrelevant for this app (DeepSeek/GitHub are remote regardless).
 
 Rationale:
 - The heavy compute (DeepSeek inference) is a **remote API call**; the server is I/O-bound (fetch GitHub files, count tokens with tiktoken, stream SSE). Light.
@@ -222,13 +224,28 @@ Alternatives:
 
 ---
 
-## 10. Open items to resolve during implementation
+## 10. Resolved decisions
 
-- Confirm `setAuthCookie` production cookie flags (`Secure`, `SameSite`) for the single-origin HTTPS setup.
-- Decide exact ghcr.io image names and visibility (private packages; the ghcr read-only pull token is one of the secrets delivered via §12).
-- Tunnel provisioning method: remotely-managed tunnel (config in Cloudflare dashboard) vs locally-configured tunnel (`config.yml` + credentials file mounted into `cloudflared`). Locally-configured keeps ingress in version control; lean that way.
-- Cloudflare Access applications + policies: (a) the human policy gating `codevibes.tjw.dev` to Justin, and (b) the service-token policy gating the secrets-broker route (§12) — both created in the Zero Trust dashboard; document the steps.
-- Secrets-broker Worker storage choice: Cloudflare **Secrets Store** (account-level, binding-consumed) vs plain **Worker secrets** (`wrangler secret put`). Lean Secrets Store for central rotation; confirm during implementation.
+All prior open items are now decided:
+
+- **`ENCRYPTION_KEY` / `JWT_SECRET`:** fetch-only, never regenerated; `ENCRYPTION_KEY` is permanent/immutable (data-loss risk — see §12 warning).
+- **SSH exposure:** Hetzner **Cloud Firewall** restricts port 22 to Justin's static home IP; key-only, no root, no passwords (§11).
+- **CORS:** tighten the backend to reject origins outside `ALLOWED_ORIGINS` in production (§8 item 1b). Safe for GitHub (CORS is browser-only).
+- **Tunnel:** **locally-configured** (`config.yml` + credential in repo/secret), ingress in version control.
+- **Secrets storage:** Cloudflare **Secrets Store** (§12).
+- **Access session:** **30 days**; kill switch is session/token revocation (§2).
+- **Hetzner location:** **Falkenstein (fsn1)**, cheapest; latency irrelevant (§9).
+- **Deploy cadence:** daily timer at **04:00 America/Detroit**; smoke test = `/api/health` + DB-touch read (§5).
+- **Backups:** trust the Volume; nightly **on-volume** `.backup` (retain 7); no offsite for now (§13).
+- **ghcr packages:** **private**, pulled via the RO token delivered through the broker (§12).
+- **Image retention:** last **3** tags for rollback (§5).
+- **DeepSeek model:** default `deepseek-chat` (the project's own recommendation); per-user overridable (§8 item 2b).
+
+Remaining to verify **in code during implementation** (not decisions, just confirmations):
+- `setAuthCookie` (`src/utils/auth.ts`) sets `Secure` + `SameSite=Lax` (or stricter) in production for the single-origin HTTPS setup.
+- Exact ghcr.io image names/paths.
+
+**Prerequisite (confirmed):** `tjw.dev` is an active Cloudflare zone with live deployments and tunnels; Zero Trust (Access) and Secrets Store are **greenfield** on the account — hence the dedicated runbooks in §14.
 
 ---
 
@@ -240,7 +257,7 @@ Responsibilities:
 
 1. **Packages** — `apt` install `podman`, `uidmap`, `slirp4netns` (rootless networking), `git`, `curl`, `ufw`. No host `cloudflared` (it runs as a pod container).
 2. **Deploy user** — create unprivileged `codevibes` user; ensure `/etc/subuid` and `/etc/subgid` ranges exist for rootless Podman; `loginctl enable-linger codevibes` so its systemd user units start at boot without a login session.
-3. **Firewall / SSH hardening** — `ufw` default deny incoming / allow outgoing; allow only `OpenSSH` (so we are not locked out). `sshd`: disable root login, disable password auth, key-only.
+3. **Firewall / SSH hardening** — `ufw` default deny incoming / allow outgoing. SSH (port 22) is restricted at the **network layer by a Hetzner Cloud Firewall** to Justin's static home IP only (he pays for a fixed public IP that will not change); `ufw` allows `OpenSSH` but the Cloud Firewall is the real gate. `sshd`: disable root login, disable password auth, key-only. No other inbound ports (the tunnel dials out).
 4. **Log caps** — write `/etc/systemd/journald.conf.d/00-codevibes.conf` with `SystemMaxUse=500M` (and a sane `MaxRetentionSec`).
 5. **Mount the data volume** — detect the attached Hetzner Volume by its stable `/dev/disk/by-id/scsi-0HC_Volume_<id>` path; if unformatted, `mkfs.ext4`; mount at `/mnt/codevibes-data` via an `/etc/fstab` entry (idempotent — existing data on a reattached volume is preserved, never reformatted). The podman `codevibes-data` volume binds here (see §13).
 6. **Bootstrap the repo + units** — as `codevibes`: clone the fork's `production` branch into `~/codevibes`, install the Quadlet units into `~/.config/containers/systemd/`, install the deploy timer + service and the weekly image-prune timer, `systemctl --user daemon-reload`.
@@ -273,7 +290,9 @@ Deliverables: `deploy/cloud-init.template.yaml`, `deploy/gen-cloud-init.sh`, `de
 
 ### Secrets delivered
 
-`JWT_SECRET`, `ENCRYPTION_KEY` (32 chars), `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, the **ghcr.io read-only pull token**, and the **Cloudflare Tunnel credential** for `cloudflared`.
+`JWT_SECRET`, `ENCRYPTION_KEY` (32 chars), `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, the **ghcr.io read-only pull token**, and the **Cloudflare Tunnel credential** for `cloudflared`. Storage is **Cloudflare Secrets Store** (account-level, binding-consumed), chosen over plain Worker secrets for central rotation and a single source of truth.
+
+> ⚠️ **`ENCRYPTION_KEY` is permanent and immutable.** It AES-encrypts every stored `github_token` and `deepseek_key` in the SQLite DB. If it ever changes, **all encrypted rows become permanently undecryptable** — silent data loss, made worse by the portable DB (a rebuilt box fetching a different key would brick the existing data). Generate it **exactly once**, store it immutably in Secrets Store, and treat any rotation as a deliberate decrypt-all → re-encrypt migration, never a casual regenerate. The secrets-broker and fetch script must never regenerate it. (`JWT_SECRET` carries the same "fetch, never regenerate" discipline but lower stakes — changing it only force-logs-out.)
 
 ### Flow
 
@@ -304,35 +323,45 @@ The SQLite DB is the only **non-reconstructible** state in the system (users, an
 - A **Hetzner Cloud Volume** (minimum 10 GB, ~€0.44/mo; the DB is megabytes, so size is a non-issue) is attached to the server and mounted at `/mnt/codevibes-data`. The podman `codevibes-data` volume binds there; the backend writes `data/codevibes.db` onto it.
 - **Move/resize/rebuild a box:** detach the volume from the old VM, attach to the new one; cloud-init detects the existing filesystem and mounts it **without reformatting**, so the DB is intact. Combined with the secrets-broker flow, both compute and data are now cattle.
 - **SQLite safety on a Volume:** a Hetzner Volume is block storage formatted ext4 and mounted on a single host, so SQLite file locking behaves exactly as on local disk. (The known SQLite hazard is network *filesystems* like NFS, which this is not.) WAL mode is fine.
-- **Backup (defense in depth):** a Volume survives VM loss but not DB corruption or accidental deletion. A nightly systemd timer runs `sqlite3 codevibes.db ".backup"` to a timestamped file on the volume, retaining the last N. Optional future enhancement: ship that dump offsite (e.g. Cloudflare R2) for off-box durability.
+- **Backup (defense in depth):** a Volume survives VM loss but not DB corruption or accidental deletion. A nightly systemd timer runs `sqlite3 codevibes.db ".backup"` to a timestamped file **on the volume**, retaining the last 7. This is kept because it's near-zero cost and guards against corruption (the more likely failure than volume loss). **Decision: trust the Hetzner Volume; no offsite backup for now** — data loss here is annoying, not catastrophic. Offsite (Cloudflare R2) remains a noted future enhancement if the data's value grows.
 
 Deliverable: volume mount handled in `deploy/cloud-init.template.yaml` (§11 step 5); nightly backup timer in `deploy/`.
 
 ---
 
-## 14. Runbooks (single-file HTML)
+## 14. Runbooks (single-file HTML) and diagrams
 
-Two **self-contained HTML** documents (inline CSS, no external dependencies) so they render offline and print cleanly — important because the recovery runbook may be read precisely when the service is down. Authored in markdown under `docs/runbooks/` and rendered to standalone HTML by a small build step.
+**Account starting state.** `tjw.dev` is already an active Cloudflare zone with live deployments and tunnels. **Cloudflare Zero Trust (Access) and Secrets Store are not yet set up** on the account — so those two get their own standalone runbooks rather than a few lines buried in the main setup.
 
-### 14.1 Initial setup runbook — `docs/runbooks/setup.html`
-End-to-end first-time setup, in dependency order, with copy-pasteable commands and explicit "you should see X" checkpoints:
+All runbooks are **self-contained single-file HTML** (inline CSS, no external dependencies) so they render offline and print cleanly — important because the recovery and Zero Trust runbooks may be read precisely when something is down or half-configured. Authored in markdown under `docs/runbooks/` and rendered to standalone HTML by a small build step. Each embeds the relevant **Excalidraw-generated diagram** (exported to inline SVG/PNG) so the visual travels with the single file.
 
-1. **DNS / Cloudflare zone** — `tjw.dev` zone; records for `codevibes.tjw.dev` (app) and `secrets.tjw.dev` (broker).
-2. **GitHub** — create the private fork; register the GitHub **OAuth App** (callback `https://codevibes.tjw.dev/api/auth/callback`); create a ghcr.io **read-only pull token**.
-3. **Cloudflare Secrets Store + broker Worker** — store the app secrets; deploy `secrets-broker/`; bind secrets.
-4. **Cloudflare Access** — (a) human policy gating `codevibes.tjw.dev` to Justin; (b) **service-token** + policy gating `secrets.tjw.dev`.
-5. **Cloudflare Tunnel** — create the tunnel; record the credential into Secrets Store; ingress → app.
-6. **Hetzner** — create the **Volume**; render cloud-init via `deploy/gen-cloud-init.sh`; create the **CX22 / Ubuntu 24.04** server, attach the volume, paste the rendered cloud-init.
-7. **First deploy + verification** — watch cloud-init complete; confirm the pod is up (`systemctl --user status`), `/api/health` passes, the site loads through Access, and GitHub OAuth login + a private-repo analysis succeed end to end.
+### 14.1 `cloudflare-zerotrust.html` — Zero Trust / Access setup (greenfield)
+Enabling Zero Trust on the account for the first time: create the Access team/org; the **human application + policy** gating `codevibes.tjw.dev` to Justin (30-day session); the **service-token application + policy** gating the broker route `secrets.tjw.dev`; how to generate, record, and later revoke the service token. Diagram: the two-layer auth flow (Access → app GitHub OAuth) and where the service token fits.
 
-### 14.2 Recovery / manual re-deploy runbook — `docs/runbooks/recovery.html`
+### 14.2 `cloudflare-secrets.html` — Secrets Store + broker Worker setup (greenfield)
+Enabling Secrets Store for the first time: create the store; add each secret (`ENCRYPTION_KEY` with its **generate-once, never-rotate** warning called out in red); deploy the `secrets-broker/` Worker with its Secrets Store bindings; bind it behind the §14.1 service-token Access policy; test a fetch with the service-token headers. Diagram: the boot-time secrets fetch path (cloud-init → service token → Access → broker Worker → Secrets Store → podman secrets).
+
+### 14.3 `setup.html` — end-to-end first deploy
+Full first-time setup in dependency order, with copy-pasteable commands and explicit "you should see X" checkpoints. References §14.1 and §14.2 for the two Cloudflare pieces rather than duplicating them:
+1. **GitHub** — create the private fork; register the GitHub **OAuth App** (callback `https://codevibes.tjw.dev/api/auth/callback`); create a ghcr.io **read-only pull token**.
+2. **Cloudflare** — complete §14.1 (Zero Trust) and §14.2 (Secrets) ; create the **Tunnel** (locally-configured `config.yml`), store its credential in Secrets Store, point ingress at the app; DNS for `codevibes.tjw.dev` and `secrets.tjw.dev`.
+3. **Hetzner** — create the **Volume**; render cloud-init via `deploy/gen-cloud-init.sh`; create the **CX22 / Ubuntu 24.04 / Falkenstein** server, attach the volume, set the **Cloud Firewall** (SSH → your static IP only), paste the rendered cloud-init.
+4. **First deploy + verification** — watch cloud-init complete; confirm the pod is up (`systemctl --user status`), the smoke test (`/api/health` + DB-touch) passes, the site loads through Access, and GitHub OAuth login + a private-repo analysis succeed end to end. Diagram: full system topology (Hetzner pod + volume, Cloudflare edge, GitHub/DeepSeek/ghcr).
+
+### 14.4 `recovery.html` — manual re-deploy / recovery
 For when automated smoke-test + rollback did **not** save you:
-
-1. **Triage** — SSH in; `systemctl --user status`, `podman ps -a`, `journalctl --user -u` for the failing unit; check `/api/health`.
-2. **Manual rollback to a known-good tag** — find the last-known-good tag (state file on the volume / ghcr tag list); point the Quadlet unit at it; `daemon-reload` + restart; re-verify health.
+1. **Triage** — SSH in; `systemctl --user status`, `podman ps -a`, `journalctl --user -u` for the failing unit; check the smoke test manually.
+2. **Manual rollback to a known-good tag** — find the last-known-good tag (state file on the volume / ghcr tag list); point the Quadlet unit at it; `daemon-reload` + restart; re-verify.
 3. **Re-fetch secrets** — if failure is secret-related, re-run `deploy/fetch-secrets.sh`; verify podman secrets and `podman login ghcr.io`.
 4. **Volume reattach / box replacement** — detach the Hetzner Volume, spin a fresh VM from cloud-init, attach the volume; verify the DB mounted intact and unreformatted.
-5. **Restore from backup** — if the DB itself is corrupt, stop the backend, restore the latest `.backup` file from the volume, restart, verify.
-6. **Escalation notes** — how to fully tear down and rebuild from scratch using the setup runbook, with the volume preserving data.
+5. **Restore from backup** — if the DB is corrupt, stop the backend, restore the latest `.backup` file from the volume, restart, verify.
+6. **Escalation** — full teardown and rebuild from the setup runbook, with the volume preserving data. Diagram: the deploy → smoke-test → swap/rollback decision flow.
 
-Deliverables: `docs/runbooks/setup.md` + `setup.html`, `docs/runbooks/recovery.md` + `recovery.html`, and the markdown→HTML render step.
+### Diagrams (Excalidraw)
+Generated with the `excalidraw-diagram` skill (available as a user/plugin skill; if it needs migrating out of the `three-flatland` repo, that's a one-time prerequisite). Source `.excalidraw` files committed under `docs/runbooks/diagrams/`, exported to inline SVG for embedding:
+- **System topology** (setup.html)
+- **Two-layer auth + service token** (cloudflare-zerotrust.html)
+- **Boot-time secrets fetch path** (cloudflare-secrets.html)
+- **Deploy/smoke-test/rollback decision flow** (recovery.html)
+
+Deliverables: `docs/runbooks/{cloudflare-zerotrust,cloudflare-secrets,setup,recovery}.md` + their rendered `.html`, the markdown→HTML render step, and `docs/runbooks/diagrams/*.excalidraw`.
