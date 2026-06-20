@@ -28,7 +28,8 @@ verify-actions: ## actionlint workflows
 verify-quadlet: ## quadlet dry-run
 	@if ls deploy/quadlet/*.container >/dev/null 2>&1; then \
 	  QUADLET=$$(command -v quadlet || echo /usr/libexec/podman/quadlet); \
-	  $$QUADLET -dryrun -user deploy/quadlet || true; else echo "no quadlet units yet"; fi
+	  if [ -x "$$QUADLET" ]; then QUADLET_UNIT_DIRS=$$(pwd)/deploy/quadlet $$QUADLET -dryrun -user; \
+	  else echo "quadlet not installed (run in OrbStack/Linux)"; fi; else echo "no quadlet units yet"; fi
 
 verify-caddy: ## caddy validate
 	@if [ -f Caddyfile ]; then caddy validate --config Caddyfile --adapter caddyfile; else echo "no Caddyfile yet"; fi

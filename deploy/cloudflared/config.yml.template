@@ -1,0 +1,6 @@
+tunnel: __TUNNEL_ID__
+credentials-file: /etc/cloudflared/cred.json
+ingress:
+  - hostname: codevibes.tjw.dev
+    service: http://localhost:80
+  - service: http_status:404

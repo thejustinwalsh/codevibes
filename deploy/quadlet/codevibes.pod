@@ -1,0 +1,5 @@
+[Pod]
+PodName=codevibes
+
+[Install]
+WantedBy=default.target

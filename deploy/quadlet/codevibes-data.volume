@@ -1,0 +1,7 @@
+[Volume]
+VolumeName=codevibes-data
+Driver=local
+# Bind the detachable Hetzner Volume mount into a named podman volume.
+Type=none
+Options=bind
+Device=/mnt/codevibes-data

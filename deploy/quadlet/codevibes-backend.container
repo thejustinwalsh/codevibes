@@ -1,0 +1,26 @@
+[Unit]
+Description=CodeVibes API
+After=network-online.target
+
+[Container]
+Image=localhost/codevibes-backend:current
+Pod=codevibes.pod
+Environment=NODE_ENV=production
+Environment=PORT=3001
+Environment=ALLOWED_ORIGINS=https://codevibes.tjw.dev
+Environment=FRONTEND_URL=https://codevibes.tjw.dev
+Environment=GITHUB_CALLBACK_URL=https://codevibes.tjw.dev/api/auth/callback
+Environment=DB_PATH=/app/data/codevibes.db
+Environment=DEEPSEEK_MODEL=deepseek-chat
+Environment=SESSION_DURATION_DAYS=30
+Volume=codevibes-data.volume:/app/data:Z
+Secret=codevibes-jwt-secret,type=env,target=JWT_SECRET
+Secret=codevibes-encryption-key,type=env,target=ENCRYPTION_KEY
+Secret=codevibes-github-client-id,type=env,target=GITHUB_CLIENT_ID
+Secret=codevibes-github-client-secret,type=env,target=GITHUB_CLIENT_SECRET
+
+[Service]
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

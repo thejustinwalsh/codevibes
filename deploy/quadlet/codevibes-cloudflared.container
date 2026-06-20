@@ -1,0 +1,16 @@
+[Unit]
+Description=CodeVibes Cloudflare Tunnel
+After=network-online.target
+
+[Container]
+Image=docker.io/cloudflare/cloudflared:latest
+Pod=codevibes.pod
+Volume=%h/codevibes/deploy/cloudflared/config.yml:/etc/cloudflared/config.yml:ro,Z
+Secret=codevibes-tunnel-cred,type=mount,target=/etc/cloudflared/cred.json
+Exec=tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
+
+[Service]
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
