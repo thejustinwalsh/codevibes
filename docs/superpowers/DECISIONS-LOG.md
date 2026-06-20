@@ -16,6 +16,18 @@ Format per entry:
 
 <!-- Append entries below this line. -->
 
+## 2026-06-20 — Move worker test stubs out of wrangler.toml [vars] (security hardening)
+- **Context:** WS-E put vitest stub values in `wrangler.toml` `[vars]`. `wrangler.toml` is committed (correctly — it's deploy config, not secrets), but `[vars]` is deployed to the Worker as **plaintext env vars** and lives in git. With only fake stubs it was harmless, but it's a leak trap (a real value pasted there leaks twice) and would collide with the same-named production Secrets Store bindings.
+- **Decision:** Removed the `[vars]` block from `secrets-broker/wrangler.toml` (now zero secret-shaped fields). Moved the test stubs to `secrets-broker/vitest.config.ts` (`poolOptions.workers.miniflare.bindings`). Worker vitest still 3/3. Real secret values never live in any committed file — only in Cloudflare Secrets Store, referenced by `store_id`/`secret_name`.
+- **Affected:** `secrets-broker/wrangler.toml`, `secrets-broker/vitest.config.ts`, spec §12.
+- **Revisit:** none — verified; this is the correct steady-state.
+
+## 2026-06-20 — Single default Secrets Store (account limit)
+- **Context:** Cloudflare accounts get one default Workers-scoped Secrets Store (max 100 secrets); additional stores can't be created.
+- **Decision:** Use the default store (5 secrets « 100). Runbook/spec/wrangler updated to "record the default store's ID" rather than "create a store"; all five bindings share that store_id. The broker is retained (user choice): a VM cannot read Secrets Store values directly (management API is write-only for values), so the broker Worker is the required bridge.
+- **Affected:** `docs/runbooks/cloudflare-secrets.{md,html}`, spec §14.2, `secrets-broker/wrangler.toml` comments.
+- **Revisit:** none.
+
 ## 2026-06-20 — Web build needs a .dockerignore; codevibes-backend kept in context (WS-L)
 - **Context:** `Dockerfile.web`'s context is the repo root. On a dev host the root carries the frontend's `node_modules` (macOS-native), which `COPY . .` would copy over the image's Linux modules — and the large context bloats builds. First fix over-corrected by excluding `codevibes-backend/`, which broke `patches/apply.sh` (it asserts BOTH `src/hooks/useAnalysis.ts` and `codevibes-backend/src/server.ts` exist).
 - **Decision:** Added root `.dockerignore` excluding `node_modules`/`**/node_modules`, `.git`, `.github/`, `dist*`, `docs/`, `deploy/`, `secrets-broker/`, `codevibes-backend/data/` — but **keeping `codevibes-backend/` source** in context so apply.sh's assertion passes. The backend source never reaches the final web image (only `dist/` is copied to the caddy stage). Verified: web image builds clean in OrbStack.

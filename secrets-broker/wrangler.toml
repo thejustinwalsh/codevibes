@@ -37,11 +37,7 @@ compatibility_flags = ["nodejs_compat"]
 # store_id = "REPLACE_STORE_ID"
 # secret_name = "codevibes-tunnel-cred"
 
-[vars]
-# Test-only stub values. In production these bindings come from Secrets Store (above).
-# vitest-pool-workers reads wrangler.toml and exposes [vars] as plain strings in `env`.
-JWT_SECRET = "test-jwt-secret"
-ENCRYPTION_KEY = "test-encryption-key-32chars123456"
-GITHUB_CLIENT_ID = "test-github-client-id"
-GITHUB_CLIENT_SECRET = "test-github-client-secret"
-TUNNEL_CRED = "{\"TunnelID\":\"test-tunnel\"}"
+# NOTE: no [vars] here on purpose. `[vars]` would be deployed to the Worker as
+# PLAINTEXT env vars and committed to git — a leak trap, and it would collide with
+# the same-named Secrets Store bindings in production. Test stub bindings live in
+# vitest.config.ts (miniflare.bindings). This file carries zero secret values.
