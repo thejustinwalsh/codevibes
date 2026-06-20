@@ -91,9 +91,10 @@ This is the "resilient to restarts" requirement.
 ### Caddy routing (single origin)
 
 ```
-codevibes.tjw.dev {
+:80 {
+    encode gzip
     handle /api/* {
-        reverse_proxy backend:3001
+        reverse_proxy localhost:3001
     }
     handle {
         root * /srv
@@ -103,7 +104,7 @@ codevibes.tjw.dev {
 }
 ```
 
-(Caddy runs behind cloudflared, which terminates TLS at Cloudflare; internal hop is plain HTTP within the pod.)
+(Caddy listens on `:80` — not a named vhost — because `cloudflared` terminates TLS at Cloudflare and forwards plain HTTP into the pod. Containers in a Podman pod share the pod's network namespace, so `localhost:3001` is how Caddy reaches the backend; container-name DNS is not available within the pod.)
 
 ---
 
@@ -285,8 +286,10 @@ Deliverables: `deploy/cloud-init.template.yaml`, `deploy/gen-cloud-init.sh`, `de
 
 ### Components
 
-- **Secrets-broker Worker** (out-of-band; not in the app request path). A small Worker that, on an authenticated request, returns the app secrets as JSON. Secret *values* are held outside the Worker code — via a **Secrets Store** binding (preferred) or Worker secrets — and read at request time (`env.JWT_SECRET.get()`).
+- **Secrets-broker Worker** (out-of-band; not in the app request path). A small Worker that, on an authenticated request, returns the app secrets as JSON. Secret *values* are held outside the Worker code — via a **Secrets Store** binding (preferred) or Worker secrets — and read at request time via `env.JWT_SECRET.get()` (Secrets Store) or plain string (test stubs). The `Env` type uses `string | { get(): Promise<string> }` with a `resolve()` helper so the same code runs against Secrets Store in production and `[vars]` plain strings in vitest.
 - **Cloudflare Access service token** — a machine credential (client-ID / client-secret pair). An Access policy on the broker route (`secrets.tjw.dev`) accepts **only** this service token. The server authenticates with `CF-Access-Client-Id` / `CF-Access-Client-Secret` headers.
+
+> ⚠️ **`[[secrets_store_secrets]]` bindings are commented out in `secrets-broker/wrangler.toml`.** They were authored with the correct shape but commented out because wrangler 3.x does not recognize the stanza (it is a wrangler 4 / Secrets Store GA feature). The `[vars]` stubs below them are test-only. **Before production deploy:** upgrade to wrangler ≥4 (or confirm Secrets Store GA support in the installed wrangler version), uncomment all five `[[secrets_store_secrets]]` blocks, fill each `store_id` with the real Secrets Store ID from the Cloudflare dashboard (see §14.2 runbook), and run `wrangler deploy` to push the live Worker. The Worker will not serve real secrets until this step is complete.
 
 ### Secrets delivered
 
@@ -340,6 +343,8 @@ Enabling Zero Trust on the account for the first time: create the Access team/or
 
 ### 14.2 `cloudflare-secrets.html` — Secrets Store + broker Worker setup (greenfield)
 Enabling Secrets Store for the first time: create the store; add each secret (`ENCRYPTION_KEY` with its **generate-once, never-rotate** warning called out in red); deploy the `secrets-broker/` Worker with its Secrets Store bindings; bind it behind the §14.1 service-token Access policy; test a fetch with the service-token headers. Diagram: the boot-time secrets fetch path (cloud-init → service token → Access → broker Worker → Secrets Store → podman secrets).
+
+> ⚠️ **Manual step required before deploying the Worker.** In `secrets-broker/wrangler.toml`, the five `[[secrets_store_secrets]]` blocks are currently **commented out** (wrangler 3.x does not support this stanza). Before running `wrangler deploy`: (1) ensure wrangler ≥4 is installed in CI and locally; (2) create the Secrets Store in the Cloudflare dashboard and note its store ID; (3) uncomment all five blocks and replace each `REPLACE_STORE_ID` placeholder with the real store ID; (4) run `wrangler deploy` to push the live Worker. Until this is done the Worker falls back to the `[vars]` test stubs and will not return production secret values.
 
 ### 14.3 `setup.html` — end-to-end first deploy
 Full first-time setup in dependency order, with copy-pasteable commands and explicit "you should see X" checkpoints. References §14.1 and §14.2 for the two Cloudflare pieces rather than duplicating them:

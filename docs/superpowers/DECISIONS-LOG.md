@@ -62,3 +62,32 @@ Format per entry:
 - **Decision:** `deploy/tests/integration.bats` test 2 instead asserts (a) `fetch-secrets.sh` references each `SECRET_*` variable, and (b) each variable's expanded value appears in the quadlet dir — a true consistency check across the config.env boundary.
 - **Affected:** `deploy/tests/integration.bats`.
 - **Revisit:** none.
+
+## 2026-06-20 — Decisions-log review (WS-K closeout)
+
+### Entries folded into the spec (with section)
+
+| Entry | Spec section updated | Change |
+|---|---|---|
+| Secrets-broker Worker test/lint plumbing (WS-E) | §12 (Components paragraph + new warning block) | Added `Env` type description (`string \| { get() }` + `resolve()` helper); added explicit ⚠️ warning that `[[secrets_store_secrets]]` bindings are commented out in `wrangler.toml`, will not serve real secrets until uncommented + `store_id` filled, and requires wrangler ≥4. |
+| Secrets-broker Worker test/lint plumbing (WS-E) | §14.2 (`cloudflare-secrets.html` runbook) | Added companion ⚠️ block with the exact pre-deploy steps: install wrangler ≥4, create Secrets Store, fill `store_id`, uncomment the five `[[secrets_store_secrets]]` blocks, run `wrangler deploy`. |
+| Caddy routing (implicit — Caddyfile uses `localhost:3001` not `backend:3001`) | §4 (Caddy routing block) | Corrected the code snippet from a named-vhost `backend:3001` form to the actual `:80 { ... reverse_proxy localhost:3001 }` form, and added an explanatory note that containers in a Podman pod share the pod's network namespace (localhost-only, no container-name DNS). |
+
+### Entries accepted as-is (benign implementation details, spec unchanged)
+
+- **Parallel orchestration model** — agent coordination only; no deliverable content changed.
+- **Local verification environment** — toolchain setup detail; no design divergence.
+- **Quadlet dry-run invocation** — corrected `QUADLET_UNIT_DIRS=<dir> quadlet -dryrun -user` invocation; Makefile/test only, not a spec concern.
+- **Bind-volume unit options bug** — corrected quadlet keys (`Type=none` + `Options=bind`); spec §4/§13 describe semantics, not key syntax.
+- **backup.sh prune uses find** — shellcheck-required `find`-based pipeline replacing `ls | tail | xargs`; identical semantics, spec §13 only specifies "retain last 7."
+- **Integration test asserts config.env indirection** — test implementation detail; spec unaffected.
+
+### Residual human punch-list (must complete before/at production deploy)
+
+1. **`[[secrets_store_secrets]]` bindings** (`secrets-broker/wrangler.toml`): install wrangler ≥4 in CI and locally; create the Cloudflare Secrets Store; note the store ID; uncomment all five `[[secrets_store_secrets]]` blocks; replace every `REPLACE_STORE_ID` with the real ID; run `wrangler deploy`. **The Worker serves test stubs only until this is done.**
+2. **`ENCRYPTION_KEY` — generate exactly once, never regenerate**: use `openssl rand -hex 16` (32 hex chars), store in Secrets Store under `codevibes-encryption-key`, never rotate (changing it bricks all encrypted DB rows).
+3. **Bind-volume runtime verification** (noted in WS-C entry): confirm `codevibes-data` actually mounts at runtime during the first live pod smoke (L3). The quadlet dry-run passed but the live bind has not been exercised against the Hetzner Volume.
+4. **`TUNNEL_ID` placeholder** (`deploy/config.env`): replace `REPLACE_WITH_TUNNEL_UUID` with the real tunnel UUID after creating the Cloudflare Tunnel during first-deploy setup (§14.3 step 2).
+5. **ghcr package visibility**: after the first CI build push, set both `codevibes-backend` and `codevibes-web` ghcr packages to **public** in package settings (one-time, required for anonymous pull — §5, §14.3 step 1).
+6. **wrangler version in CI**: confirm `.github/workflows/build.yml` pins or installs wrangler ≥4 so `[[secrets_store_secrets]]` is recognized during `wrangler deploy --dry-run` and the live deploy step.
+7. **`setAuthCookie` audit** (§8/§10 open confirmation): verify `src/utils/auth.ts` sets `Secure` + `SameSite=Lax` (or stricter) in production before first user login.
