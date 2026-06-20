@@ -1,0 +1,22 @@
+# Build-context hygiene. Critical for Dockerfile.web (context = repo root):
+# keeps host node_modules from clobbering the image's freshly-installed deps,
+# and keeps the context small.
+#
+# NOTE: codevibes-backend/ is intentionally NOT excluded — Dockerfile.web runs
+# patches/apply.sh, which asserts BOTH src/hooks/useAnalysis.ts AND
+# codevibes-backend/src/server.ts exist (the codemod's safety check). Only its
+# node_modules/data are pruned. The backend source never reaches the final web
+# image (only dist/ is copied to the caddy stage); it just needs to be present
+# in the build context for the assertion to pass.
+node_modules
+**/node_modules
+.git
+.github/
+dist
+dist-ssr
+*.log
+docs/
+deploy/
+secrets-broker/
+codevibes-backend/data/
+.DS_Store

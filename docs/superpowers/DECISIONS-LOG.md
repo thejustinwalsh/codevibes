@@ -16,6 +16,28 @@ Format per entry:
 
 <!-- Append entries below this line. -->
 
+## 2026-06-20 — Web build needs a .dockerignore; codevibes-backend kept in context (WS-L)
+- **Context:** `Dockerfile.web`'s context is the repo root. On a dev host the root carries the frontend's `node_modules` (macOS-native), which `COPY . .` would copy over the image's Linux modules — and the large context bloats builds. First fix over-corrected by excluding `codevibes-backend/`, which broke `patches/apply.sh` (it asserts BOTH `src/hooks/useAnalysis.ts` and `codevibes-backend/src/server.ts` exist).
+- **Decision:** Added root `.dockerignore` excluding `node_modules`/`**/node_modules`, `.git`, `.github/`, `dist*`, `docs/`, `deploy/`, `secrets-broker/`, `codevibes-backend/data/` — but **keeping `codevibes-backend/` source** in context so apply.sh's assertion passes. The backend source never reaches the final web image (only `dist/` is copied to the caddy stage). Verified: web image builds clean in OrbStack.
+- **Affected:** `.dockerignore` (new).
+- **Revisit:** none — verified.
+
+## 2026-06-20 — OrbStack test-machine env setup (WS-L)
+- **Context:** Rootless `podman build` in the OrbStack Ubuntu machine failed twice on environment, not on our deliverables: (1) no subuid/subgid ranges for the user → couldn't unpack base image; (2) `caddy:2-alpine` short name didn't resolve (no unqualified-search registry; `node` worked only via an existing alias).
+- **Decision:** Configured the OrbStack machine to mirror what Hetzner cloud-init does: added subuid/subgid ranges + `podman system migrate`, and added `unqualified-search-registries = ["docker.io"]`. These are **test-host** fixes; the Dockerfiles are unchanged and correct for CI (GitHub Actions buildx, docker.io default). The subuid step confirms §11's cloud-init subuid configuration is load-bearing.
+- **Affected:** OrbStack `codevibes-test` machine only (no repo files).
+- **Revisit:** none for the repo; the Hetzner cloud-init already sets up subuids.
+
+## 2026-06-20 — Image HEALTHCHECK ignored by podman OCI builds (WS-L, observation)
+- **Context:** The backend Dockerfile's `HEALTHCHECK` is ignored when podman builds OCI-format images ("HEALTHCHECK is not supported for OCI image format").
+- **Decision:** Acceptable — runtime health is enforced by `deploy/deploy.sh`'s smoke test (HTTP `/api/health` + DB-touch) at deploy time, which is the actual rollback gate. The Dockerfile HEALTHCHECK is informational (and works under docker-format/CI builds).
+- **Affected:** none (observation).
+- **Revisit (optional):** consider adding `HealthCmd=` to `codevibes-backend.container` for continuous runtime health → systemd restart, as a future enhancement.
+
+## 2026-06-20 — Deployability gate passed (WS-L closeout)
+- All Phase 0–3 workstreams complete and committed. `make test` (37 bats + 3 worker) and `make verify` green. Both images build in OrbStack; backend pod smoke serves `/api/health` and creates the SQLite DB+WAL on the mounted volume; quadlet dry-run clean (19 units); cloud-init renders <32 KiB valid YAML; wrangler dry-run OK. See `docs/superpowers/DEPLOYABILITY.md` for the full spec-coverage map and the residual human punch-list. Implementation is ready for runbook-driven Cloudflare + Hetzner deploy.
+- **Note:** WS-K punch-list item "audit `setAuthCookie`" is already satisfied (verified prod-safe cookie flags in `src/utils/auth.ts`).
+
 ## 2026-06-20 — Parallel orchestration model for Phase 1
 - **Context:** The plan is designed for parallel "horde" execution, but all workstreams share one git working tree. Concurrent `git commit` races corrupt the index, and concurrent edits to shared files (`.gitignore`, `DECISIONS-LOG.md`) conflict.
 - **Decision:** Phase 1 subagents are **write-only** — they create their disjoint files and run their own tests/verifications, but do NOT run git, and do NOT edit `.gitignore` or `DECISIONS-LOG.md`. They return a summary plus any decisions in their final message. The orchestrator (main loop) commits each workstream sequentially as agents complete, appends their decisions here, and owns `.gitignore`. Parallelism is preserved for the expensive work (implementation); only the cheap, contention-prone step (commits) is serialized.
