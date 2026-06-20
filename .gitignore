@@ -38,3 +38,10 @@ dist-ssr
 deploy/cloud-init.out.yaml
 deploy/cloud-init.vars
 deploy/cloudflared/config.yml
+
+# SQLite runtime DB + WAL/SHM must never be committed (upstream leaked theirs).
+# The real DB lives on the Hetzner volume at runtime, not in the repo.
+codevibes-backend/data/*.db
+codevibes-backend/data/*.db-wal
+codevibes-backend/data/*.db-shm
+codevibes-backend/data/*.sqlite*
