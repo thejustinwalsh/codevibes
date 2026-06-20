@@ -109,11 +109,11 @@ codevibes.tjw.dev {
 
 ## 5. Build and deploy pipeline — CI builds, server pulls
 
-The server **never builds**. CI builds versioned images and pushes them to **GitHub Container Registry (ghcr.io)**. The server pulls a tag and runs it. Rollback = point back at the previous tag. This is what makes rollback trivial and the server "dumb and reliable."
+The server **never builds**. CI builds versioned images and pushes them to **GitHub Container Registry (ghcr.io)** as **public** packages. The server pulls a tag **anonymously** (no registry credential needed) and runs it. Rollback = point back at the previous tag. This is what makes rollback trivial and the server "dumb and reliable." Public images are safe here precisely because nothing secret is ever baked in — all secrets arrive at runtime via podman secrets (§12).
 
 ### Repositories and branches
 
-- **Private fork** owned by Justin (e.g. `thejustinwalsh/codevibes`).
+- **Public fork** owned by Justin (e.g. `thejustinwalsh/codevibes`). Public by design: it forces good hygiene — nothing secret may be hardcoded or shipped in an image, since anyone can read the repo and pull the images. Privacy-as-a-crutch is exactly the laziness we want to preclude. (See the no-secrets-in-image guarantees in §4/§12.)
 - Long-lived branch **`production`** holds the additive infra files (Dockerfiles, Caddyfile, Quadlet units, workflows, deploy script, `patches/`). Upstream tags are merged into `production`.
 
 ### Jobs (all GitHub Actions in the fork)
@@ -131,7 +131,7 @@ The server **never builds**. CI builds versioned images and pushes them to **Git
      - **caddy+SPA** — multi-stage: Node stage runs `npm ci && VITE_API_URL=https://codevibes.tjw.dev npm run build`; final stage is `caddy` with `dist/` copied to `/srv` and the Caddyfile in place.
 
 3. **Deploy** — pulled by the **server**, not pushed by CI.
-   - A **daily systemd timer** on the server runs `deploy.sh` at **04:00 America/Detroit** (ET; the timer uses a timezone-qualified `OnCalendar` so DST is handled — Ubuntu 24.04's systemd supports this). A bad deploy therefore lands during off-hours. The timer:
+   - A **daily systemd timer** on the server runs `deploy.sh` at **04:00 America/Detroit** (ET; the timer uses a timezone-qualified `OnCalendar` so DST is handled — Ubuntu 26.04's systemd supports this). A bad deploy therefore lands during off-hours. The timer:
      1. Checks ghcr.io for a newer version tag than the running one.
      2. If newer: pulls the new images, starts the new pod/containers **alongside** (or staged), and runs a **smoke test** = `/api/health` **plus a DB-touch read** (open the SQLite file on the volume and run one query). The DB-touch catches a broken volume mount or corrupt DB before it goes live, not just a dead HTTP port.
      3. If healthy within a timeout: swaps the Quadlet units to the new tag, reloads systemd, confirms health again, and records the new tag as **last-known-good**.
@@ -211,7 +211,7 @@ Cookie auth requires `Secure`/`SameSite` behavior consistent with HTTPS single-o
 
 ## 9. Hetzner sizing — CX22
 
-**Recommendation: Hetzner Cloud CX22** — 2 vCPU (shared, Intel/AMD x86), 4 GB RAM, 40 GB NVMe, ~€4.59/mo. Image: **Ubuntu 24.04 (x86)**. Location: **Falkenstein (fsn1)** — chosen as the cheapest; latency is irrelevant for this app (DeepSeek/GitHub are remote regardless).
+**Recommendation: Hetzner Cloud CX22** — 2 vCPU (shared, Intel/AMD x86), 4 GB RAM, 40 GB NVMe, ~€4.59/mo. Image: **Ubuntu 26.04 (x86)**. Location: **Falkenstein (fsn1)** — chosen as the cheapest; latency is irrelevant for this app (DeepSeek/GitHub are remote regardless).
 
 Rationale:
 - The heavy compute (DeepSeek inference) is a **remote API call**; the server is I/O-bound (fetch GitHub files, count tokens with tiktoken, stream SSE). Light.
@@ -237,7 +237,7 @@ All prior open items are now decided:
 - **Hetzner location:** **Falkenstein (fsn1)**, cheapest; latency irrelevant (§9).
 - **Deploy cadence:** daily timer at **04:00 America/Detroit**; smoke test = `/api/health` + DB-touch read (§5).
 - **Backups:** trust the Volume; nightly **on-volume** `.backup` (retain 7); no offsite for now (§13).
-- **ghcr packages:** **private**, pulled via the RO token delivered through the broker (§12).
+- **ghcr packages:** **public**, pulled anonymously (no registry token). Public-by-design enforces no-secrets-in-image hygiene (§5).
 - **Image retention:** last **3** tags for rollback (§5).
 - **DeepSeek model:** default `deepseek-chat` (the project's own recommendation); per-user overridable (§8 item 2b).
 
@@ -251,7 +251,7 @@ Remaining to verify **in code during implementation** (not decisions, just confi
 
 ## 11. Cloud-init provisioning
 
-A single cloud-init `user-data` document (well under Hetzner's 32 KiB limit) turns a bare **Ubuntu 24.04 x86** VM into a host ready to run the pod on first boot, with no manual host setup. It performs **non-secret host prep only**; secrets arrive via §12.
+A single cloud-init `user-data` document (well under Hetzner's 32 KiB limit) turns a bare **Ubuntu 26.04 x86** VM into a host ready to run the pod on first boot, with no manual host setup. It performs **non-secret host prep only**; secrets arrive via §12.
 
 Responsibilities:
 
@@ -290,7 +290,7 @@ Deliverables: `deploy/cloud-init.template.yaml`, `deploy/gen-cloud-init.sh`, `de
 
 ### Secrets delivered
 
-`JWT_SECRET`, `ENCRYPTION_KEY` (32 chars), `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, the **ghcr.io read-only pull token**, and the **Cloudflare Tunnel credential** for `cloudflared`. Storage is **Cloudflare Secrets Store** (account-level, binding-consumed), chosen over plain Worker secrets for central rotation and a single source of truth.
+`JWT_SECRET`, `ENCRYPTION_KEY` (32 chars), `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and the **Cloudflare Tunnel credential** for `cloudflared`. (No ghcr pull token — images are public, §5.) Storage is **Cloudflare Secrets Store** (account-level, binding-consumed), chosen over plain Worker secrets for central rotation and a single source of truth.
 
 > ⚠️ **`ENCRYPTION_KEY` is permanent and immutable.** It AES-encrypts every stored `github_token` and `deepseek_key` in the SQLite DB. If it ever changes, **all encrypted rows become permanently undecryptable** — silent data loss, made worse by the portable DB (a rebuilt box fetching a different key would brick the existing data). Generate it **exactly once**, store it immutably in Secrets Store, and treat any rotation as a deliberate decrypt-all → re-encrypt migration, never a casual regenerate. The secrets-broker and fetch script must never regenerate it. (`JWT_SECRET` carries the same "fetch, never regenerate" discipline but lower stakes — changing it only force-logs-out.)
 
@@ -298,7 +298,7 @@ Deliverables: `deploy/cloud-init.template.yaml`, `deploy/gen-cloud-init.sh`, `de
 
 1. cloud-init places the service token at `/etc/codevibes/cf-service-token.env` (`0600`).
 2. `deploy/fetch-secrets.sh` calls `https://secrets.tjw.dev/...` with the two `CF-Access-Client-*` headers; Access validates the service token and passes the request to the broker Worker.
-3. The script writes each returned value directly into a **podman secret** (`podman secret create`), then `podman login ghcr.io` using the pull token. No secret is persisted to disk in plaintext beyond the transient fetch; the service-token file is the only at-rest credential.
+3. The script writes each returned value directly into a **podman secret** (`podman secret create`). (No `podman login` — ghcr images are public.) No secret is persisted to disk in plaintext beyond the transient fetch; the service-token file is the only at-rest credential.
 4. The Quadlet `backend` and `cloudflared` units reference podman secrets (`Secret=` directives) rather than env files.
 
 ### Why this shape
@@ -343,16 +343,16 @@ Enabling Secrets Store for the first time: create the store; add each secret (`E
 
 ### 14.3 `setup.html` — end-to-end first deploy
 Full first-time setup in dependency order, with copy-pasteable commands and explicit "you should see X" checkpoints. References §14.1 and §14.2 for the two Cloudflare pieces rather than duplicating them:
-1. **GitHub** — create the private fork; register the GitHub **OAuth App** (callback `https://codevibes.tjw.dev/api/auth/callback`); create a ghcr.io **read-only pull token**.
+1. **GitHub** — create the public fork; register the GitHub **OAuth App** (callback `https://codevibes.tjw.dev/api/auth/callback`); after the first build, set the two ghcr packages' visibility to **public** (one-time, in package settings). No pull token needed.
 2. **Cloudflare** — complete §14.1 (Zero Trust) and §14.2 (Secrets) ; create the **Tunnel** (locally-configured `config.yml`), store its credential in Secrets Store, point ingress at the app; DNS for `codevibes.tjw.dev` and `secrets.tjw.dev`.
-3. **Hetzner** — create the **Volume**; render cloud-init via `deploy/gen-cloud-init.sh`; create the **CX22 / Ubuntu 24.04 / Falkenstein** server, attach the volume, set the **Cloud Firewall** (SSH → your static IP only), paste the rendered cloud-init.
+3. **Hetzner** — create the **Volume**; render cloud-init via `deploy/gen-cloud-init.sh`; create the **CX22 / Ubuntu 26.04 / Falkenstein** server, attach the volume, set the **Cloud Firewall** (SSH → your static IP only), paste the rendered cloud-init.
 4. **First deploy + verification** — watch cloud-init complete; confirm the pod is up (`systemctl --user status`), the smoke test (`/api/health` + DB-touch) passes, the site loads through Access, and GitHub OAuth login + a private-repo analysis succeed end to end. Diagram: full system topology (Hetzner pod + volume, Cloudflare edge, GitHub/DeepSeek/ghcr).
 
 ### 14.4 `recovery.html` — manual re-deploy / recovery
 For when automated smoke-test + rollback did **not** save you:
 1. **Triage** — SSH in; `systemctl --user status`, `podman ps -a`, `journalctl --user -u` for the failing unit; check the smoke test manually.
 2. **Manual rollback to a known-good tag** — find the last-known-good tag (state file on the volume / ghcr tag list); point the Quadlet unit at it; `daemon-reload` + restart; re-verify.
-3. **Re-fetch secrets** — if failure is secret-related, re-run `deploy/fetch-secrets.sh`; verify podman secrets and `podman login ghcr.io`.
+3. **Re-fetch secrets** — if failure is secret-related, re-run `deploy/fetch-secrets.sh`; verify podman secrets exist.
 4. **Volume reattach / box replacement** — detach the Hetzner Volume, spin a fresh VM from cloud-init, attach the volume; verify the DB mounted intact and unreformatted.
 5. **Restore from backup** — if the DB is corrupt, stop the backend, restore the latest `.backup` file from the volume, restart, verify.
 6. **Escalation** — full teardown and rebuild from the setup runbook, with the volume preserving data. Diagram: the deploy → smoke-test → swap/rollback decision flow.
