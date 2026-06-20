@@ -56,3 +56,9 @@ Format per entry:
   5. Created `secrets-broker/eslint.config.js` (eslint 9 flat config) + added `@typescript-eslint/parser`/`-plugin` devDeps; removed the superseded `.eslintrc.json`. Needed because eslint 9 ignores legacy `.eslintrc.json` and the parent flat config pulls deps absent from the parent's node_modules.
 - **Affected:** `secrets-broker/{wrangler.toml,src/index.ts,vitest.config.ts,eslint.config.js,package.json}`.
 - **Revisit (IMPORTANT):** before production deploy, **uncomment and complete the `[[secrets_store_secrets]]` bindings** (fill `store_id` per the cloudflare-secrets runbook) and confirm the binding shape against the wrangler version in CI. The Worker won't serve real secrets until then.
+
+## 2026-06-20 — Integration test asserts config.env indirection, not literals (WS-J)
+- **Context:** The plan's J2 sample grepped `fetch-secrets.sh` for literal secret names (`codevibes-jwt-secret`). The implemented script correctly uses `$SECRET_*` variable references from `config.env` (single source of truth), so a literal grep would false-fail correct code.
+- **Decision:** `deploy/tests/integration.bats` test 2 instead asserts (a) `fetch-secrets.sh` references each `SECRET_*` variable, and (b) each variable's expanded value appears in the quadlet dir — a true consistency check across the config.env boundary.
+- **Affected:** `deploy/tests/integration.bats`.
+- **Revisit:** none.
