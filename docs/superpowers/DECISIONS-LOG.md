@@ -149,3 +149,9 @@ Format per entry:
 - **Decision:** `swap_to` now restarts the container services (`codevibes-backend/web/cloudflared.service`), which pull in the pod + volume. Added `ContainerName=` to each `.container` for clean names. **Re-validated:** pod Up; backend `/api/health` OK directly AND through Caddy (single-origin proxy); Caddy serves the SPA. (cloudflared not exercised — needs a live tunnel.)
 - **Affected:** `deploy/deploy.sh`, `deploy/quadlet/codevibes-{backend,web,cloudflared}.container`.
 - **Revisit:** confirm cloudflared registers on the real box.
+
+## 2026-06-21 — Cloud-init INTEGRATION test added (the missing verification) + sshd/openssh fixes
+- **Context:** We lint/render/schema-checked cloud-init but never EXECUTED it, so runcmd bugs reached prod one at a time. Added `deploy/tests/cloud-init-integration.sh`: boots a fresh OrbStack Ubuntu 26.04 machine with the rendered cloud-init as real user-data and asserts host state. It immediately caught: (1) the sshd `sed` on `/etc/ssh/sshd_config` is a no-op on Ubuntu 24.04+/26.04 (settings live in `sshd_config.d/*.conf` drop-ins; the main file may not even exist); (2) the OrbStack image ships no `openssh-server` (it accesses machines out-of-band).
+- **Decision:** Harden sshd via a `write_files` drop-in `/etc/ssh/sshd_config.d/00-codevibes.conf` (`PermitRootLogin prohibit-password`, `PasswordAuthentication no`, `PubkeyAuthentication yes`); add `openssh-server` to packages (no-op on Hetzner, essential on minimal images); add a runcmd mirroring the platform-injected key from root → codevibes. Test asserts effective config via `sshd -T`. Wired into `make verify-cloudinit` and documented as a REQUIRED tier in CLAUDE.md. All checks pass on a fresh boot.
+- **Affected:** `deploy/cloud-init.template.yaml`, `deploy/tests/cloud-init-integration.sh` (new), `Makefile`, `CLAUDE.md`.
+- **Revisit:** confirm on the real Hetzner box that root gets the injected key (then codevibes gets the copy).

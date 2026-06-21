@@ -1,6 +1,6 @@
 #cloud-config
 package_update: true
-packages: [podman, uidmap, slirp4netns, git, curl, jq, sqlite3, ufw, fail2ban]
+packages: [openssh-server, podman, uidmap, slirp4netns, git, curl, jq, sqlite3, ufw, fail2ban]
 users:
   - default          # keep the distro/Hetzner default user so the injected SSH key lands
   - name: codevibes
@@ -29,6 +29,16 @@ write_files:
       maxretry = 4
       findtime = 10m
       bantime = 1h
+  # Key-only SSH via a drop-in. Ubuntu 24.04+/26.04 keep these in sshd_config.d/*.conf,
+  # NOT the main sshd_config, so editing the main file does nothing. A 00- drop-in is
+  # read first (first-match wins) so it overrides the cloud image's defaults.
+  # prohibit-password (not "no") keeps key-based root working — there's no other
+  # key-bearing SSH account, so "no" would lock the box out.
+  - path: /etc/ssh/sshd_config.d/00-codevibes.conf
+    content: |
+      PermitRootLogin prohibit-password
+      PasswordAuthentication no
+      PubkeyAuthentication yes
 runcmd:
   - systemctl restart systemd-journald
   # NOTE: --force is ONLY valid for `enable`/`reset`. Using it on `default`/`allow`
@@ -38,10 +48,7 @@ runcmd:
   - ufw default allow outgoing
   - ufw allow 22/tcp
   - ufw --force enable
-  # Key-only SSH. PermitRootLogin=prohibit-password keeps key-based root (Hetzner's
-  # access model) working while disabling password root login. Do NOT use "no" —
-  # there is no other key-bearing SSH user, so "no" locks the box out.
-  - sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/;s/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+  # Apply the sshd drop-in (written above) and start fail2ban.
   - systemctl reload ssh || systemctl reload sshd || true
   - systemctl enable --now fail2ban
   - loginctl enable-linger codevibes
@@ -51,6 +58,9 @@ runcmd:
   - if [ -n "$DEV" ] && ! blkid "$DEV"; then mkfs.ext4 -F "$DEV"; fi
   - if [ -n "$DEV" ]; then grep -q "$DEV" /etc/fstab || echo "$DEV /mnt/codevibes-data ext4 discard,nofail,defaults 0 0" >> /etc/fstab; mount -a; fi
   - chown -R codevibes:codevibes /mnt/codevibes-data /etc/codevibes
+  # Mirror the platform-injected SSH key (root, via the `- default` user) to codevibes
+  # so you can SSH directly as the deploy user. No-op if root has no key yet.
+  - if [ -s /root/.ssh/authorized_keys ]; then install -d -m 700 -o codevibes -g codevibes /home/codevibes/.ssh && install -m 600 -o codevibes -g codevibes /root/.ssh/authorized_keys /home/codevibes/.ssh/authorized_keys; fi
   # clone fork, install units, fetch secrets, first deploy (as codevibes, with user systemd)
   - su - codevibes -c 'git clone -b production https://github.com/__FORK_REPO__.git ~/codevibes'
   - su - codevibes -c 'mkdir -p ~/.config/containers/systemd ~/.config/systemd/user'

@@ -33,6 +33,7 @@ We touch upstream source **only** for production-config necessity or a **securit
 **Local test tiers** (host is macOS/arm64; target is Linux/x86):
 - Unit tier on the Mac: bats, shellcheck, yamllint, hadolint, actionlint, caddy validate, Worker vitest.
 - Container/systemd tier in an **OrbStack Ubuntu 26.04 Linux machine** (mirrors Hetzner): `podman build`, `quadlet -dryrun`, rootless podman + systemd + linger, local pod smoke. Do **not** install Podman on macOS. CI (x86) builds the authoritative images; local arm64 builds are functional smoke only.
+- **Integration tier (REQUIRED after any cloud-init change):** `make verify-cloudinit` boots a fresh OrbStack machine with the rendered cloud-init as real user-data and asserts the host ends up correctly provisioned (ufw, sshd hardening via `sshd -T`, fail2ban, user/linger, clone, units). Lint/render checks do **not** catch runcmd execution bugs — this tier does. Don't ship a cloud-init edit without it green.
 
 Run the relevant verifications for whatever **we** touched:
 

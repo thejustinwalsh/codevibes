@@ -2,7 +2,7 @@
 SHELL := /bin/bash
 SHELLSCRIPTS := $(shell find deploy patches -name '*.sh' 2>/dev/null)
 
-.PHONY: help test verify verify-shell verify-yaml verify-docker verify-actions verify-quadlet verify-caddy verify-worker
+.PHONY: help test verify verify-shell verify-yaml verify-docker verify-actions verify-quadlet verify-caddy verify-worker verify-cloudinit
 
 help: ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-16s %s\n",$$1,$$2}'
@@ -11,7 +11,10 @@ test: ## run all bats + worker unit tests
 	@bats $$(find deploy patches -name '*.bats')
 	@if [ -d secrets-broker ]; then cd secrets-broker && npm test; fi
 
-verify: verify-shell verify-yaml verify-docker verify-actions verify-quadlet verify-caddy verify-worker ## run every verifier
+verify: verify-shell verify-yaml verify-docker verify-actions verify-quadlet verify-caddy verify-worker ## run every (fast) verifier
+
+verify-cloudinit: ## INTEGRATION: boot a fresh OrbStack machine and run the real cloud-init end-to-end (~3 min). REQUIRED after cloud-init changes.
+	@if command -v orb >/dev/null; then bash deploy/tests/cloud-init-integration.sh; else echo "OrbStack (orb) not available — cannot run cloud-init integration test"; fi
 
 verify-shell: ## shellcheck our scripts
 	@if [ -n "$(SHELLSCRIPTS)" ]; then shellcheck $(SHELLSCRIPTS); else echo "no shell scripts yet"; fi
