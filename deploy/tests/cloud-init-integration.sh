@@ -57,6 +57,7 @@ check "fail2ban active"                   "systemctl is-active --quiet fail2ban"
 check "codevibes user exists"             "id codevibes"
 check "linger enabled for codevibes"      "loginctl show-user codevibes -p Linger 2>/dev/null | grep -q Linger=yes"
 check "repo cloned (production)"          "test -d /home/codevibes/codevibes/deploy"
+check "deploy scripts are executable"     "test -x /home/codevibes/codevibes/deploy/fetch-secrets.sh && test -x /home/codevibes/codevibes/deploy/deploy.sh && test -x /home/codevibes/codevibes/deploy/render-config.sh"
 check "quadlet units installed"           "test -f /home/codevibes/.config/containers/systemd/codevibes-backend.container"
 check "deploy timer units present"        "test -f /home/codevibes/.config/systemd/user/codevibes-deploy.timer"
 

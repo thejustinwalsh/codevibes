@@ -63,6 +63,8 @@ runcmd:
   - if [ -s /root/.ssh/authorized_keys ]; then install -d -m 700 -o codevibes -g codevibes /home/codevibes/.ssh && install -m 600 -o codevibes -g codevibes /root/.ssh/authorized_keys /home/codevibes/.ssh/authorized_keys; fi
   # clone fork, install units, fetch secrets, first deploy (as codevibes, with user systemd)
   - su - codevibes -c 'git clone -b production https://github.com/__FORK_REPO__.git ~/codevibes'
+  # Safety net: ensure scripts are executable even if a commit lost the +x bit.
+  - su - codevibes -c 'chmod +x ~/codevibes/deploy/*.sh ~/codevibes/patches/*.sh ~/codevibes/docs/runbooks/*.sh 2>/dev/null || true'
   - su - codevibes -c 'mkdir -p ~/.config/containers/systemd ~/.config/systemd/user'
   - su - codevibes -c 'cp ~/codevibes/deploy/quadlet/*.pod ~/codevibes/deploy/quadlet/*.container ~/codevibes/deploy/quadlet/*.volume ~/.config/containers/systemd/'
   - su - codevibes -c 'cp ~/codevibes/deploy/quadlet/*.timer ~/codevibes/deploy/quadlet/*.service ~/.config/systemd/user/'
