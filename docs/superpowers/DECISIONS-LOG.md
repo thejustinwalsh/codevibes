@@ -137,3 +137,9 @@ Format per entry:
 - **Decision:** Port 22 open, **key-only** (`PasswordAuthentication no`, `PermitRootLogin prohibit-password`), brute force throttled by **fail2ban** (sshd jail, maxretry 4, bantime 1h). No source-IP allow-list. Added `fail2ban` to packages + `/etc/fail2ban/jail.local` + `systemctl enable --now fail2ban`. Also documented that the server MUST have an IPv4 (GitHub/ghcr are IPv4-only).
 - **Affected:** `deploy/cloud-init.template.yaml`, spec §10/§11/§14.3, `docs/runbooks/setup.{md,html}`.
 - **Revisit:** optionally move SSH behind Cloudflare Access (cloudflared) later for true zero-open-ports.
+
+## 2026-06-20 — SSH-timeout root cause: `ufw --force allow` is invalid (added no rule)
+- **Context:** Every box timed out on SSH despite sshd listening and the Hetzner Cloud Firewall open. Web console showed ufw **enabled, default-deny, with NO allow rules**. Verified in OrbStack: `ufw --force allow 22/tcp` just prints usage and adds nothing (`--force` is valid only for `enable`/`reset`), while `ufw --force enable` succeeds → ufw deny-all + no SSH allow → SYN silently dropped → connection timeout. The `--force default …` lines failed the same way but happened to match ufw's built-in defaults, so only the missing `allow 22` bit.
+- **Decision:** Drop `--force` from every ufw line except `enable`. Also fixed bug B — the `users:` block omitted `- default`, which suppresses injection of the operator's SSH key (would cause permission-denied even once reachable) — by adding `- default`; and cleared the `sudo: false` cloud-init deprecation by omitting the key.
+- **Affected:** `deploy/cloud-init.template.yaml`.
+- **Revisit:** none — root cause verified empirically; live box unblocked via `sudo ufw allow 22/tcp` on the console.

@@ -2,9 +2,9 @@
 package_update: true
 packages: [podman, uidmap, slirp4netns, git, curl, jq, sqlite3, ufw, fail2ban]
 users:
+  - default          # keep the distro/Hetzner default user so the injected SSH key lands
   - name: codevibes
     shell: /bin/bash
-    sudo: false
     lock_passwd: true
 write_files:
   - path: /etc/systemd/journald.conf.d/00-codevibes.conf
@@ -31,9 +31,12 @@ write_files:
       bantime = 1h
 runcmd:
   - systemctl restart systemd-journald
-  - ufw --force default deny incoming
-  - ufw --force default allow outgoing
-  - ufw --force allow 22/tcp
+  # NOTE: --force is ONLY valid for `enable`/`reset`. Using it on `default`/`allow`
+  # makes ufw print usage and add NO rule — which previously left ufw enabled with
+  # default-deny and no SSH allow, silently dropping port 22 (connection timeout).
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow 22/tcp
   - ufw --force enable
   # Key-only SSH. PermitRootLogin=prohibit-password keeps key-based root (Hetzner's
   # access model) working while disabling password root login. Do NOT use "no" —
