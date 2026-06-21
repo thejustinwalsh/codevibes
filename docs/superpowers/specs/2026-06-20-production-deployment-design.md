@@ -199,7 +199,7 @@ All minor:
    - `ALLOWED_ORIGINS=https://codevibes.tjw.dev`
    - `FRONTEND_URL=https://codevibes.tjw.dev`
    - `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_CALLBACK_URL=https://codevibes.tjw.dev/api/auth/callback`
-   - `JWT_SECRET` (`openssl rand -base64 32`), `ENCRYPTION_KEY` (exactly 32 chars; `openssl rand -hex 16`), `SESSION_DURATION_DAYS`
+   - `JWT_SECRET` (`openssl rand -base64 32`), `ENCRYPTION_KEY` (**64 hex chars = 32 bytes**; `openssl rand -hex 32` — the upstream `.env.example` saying "32 chars / `rand -hex 16`" is WRONG; `encryption.ts` reads `.slice(0,64)` as hex for AES-256-GCM and a shorter key throws "Invalid key length"), `SESSION_DURATION_DAYS`
    - `DEEPSEEK_MODEL` (optional)
 4. `codevibes-backend/Dockerfile` builder stage: add `python3 make g++` for `better-sqlite3`.
 5. New files: `Dockerfile.web`, `Caddyfile`, Quadlet units, `deploy/deploy.sh`, systemd timer units, `.github/workflows/sync.yml`, `.github/workflows/build.yml`, `patches/apply.sh`.
@@ -293,7 +293,7 @@ Deliverables: `deploy/cloud-init.template.yaml`, `deploy/gen-cloud-init.sh`, `de
 
 ### Secrets delivered
 
-`JWT_SECRET`, `ENCRYPTION_KEY` (32 chars), `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and the **Cloudflare Tunnel credential** for `cloudflared`. (No ghcr pull token — images are public, §5.) Storage is **Cloudflare Secrets Store** (account-level, binding-consumed), chosen over plain Worker secrets for central rotation and a single source of truth.
+`JWT_SECRET`, `ENCRYPTION_KEY` (**64 hex chars / 32 bytes** — `openssl rand -hex 32`; see §8), `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and the **Cloudflare Tunnel credential** for `cloudflared`. (No ghcr pull token — images are public, §5.) Storage is **Cloudflare Secrets Store** (account-level, binding-consumed), chosen over plain Worker secrets for central rotation and a single source of truth.
 
 > ⚠️ **`ENCRYPTION_KEY` is permanent and immutable.** It AES-encrypts every stored `github_token` and `deepseek_key` in the SQLite DB. If it ever changes, **all encrypted rows become permanently undecryptable** — silent data loss, made worse by the portable DB (a rebuilt box fetching a different key would brick the existing data). Generate it **exactly once**, store it immutably in Secrets Store, and treat any rotation as a deliberate decrypt-all → re-encrypt migration, never a casual regenerate. The secrets-broker and fetch script must never regenerate it. (`JWT_SECRET` carries the same "fetch, never regenerate" discipline but lower stakes — changing it only force-logs-out.)
 

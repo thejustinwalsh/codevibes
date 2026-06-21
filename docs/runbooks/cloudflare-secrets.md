@@ -47,8 +47,10 @@ Do **not** try to create a second store (the account allows only one).
 # JWT_SECRET — can be rotated (force-logs-out all sessions; low stakes)
 openssl rand -base64 32
 
-# ENCRYPTION_KEY — NEVER rotate; 32 hex chars (16 bytes)
-openssl rand -hex 16
+# ENCRYPTION_KEY — NEVER rotate; 64 hex chars (32 bytes) for AES-256-GCM.
+# (encryption.ts reads .slice(0,64) as hex — a shorter key throws "Invalid key length".
+#  The upstream .env.example saying "rand -hex 16 / 32 chars" is WRONG.)
+openssl rand -hex 32
 ```
 
 For `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`: these come from the GitHub OAuth App you register in the setup runbook. Complete the GitHub OAuth App step there first, then return here.
@@ -60,7 +62,7 @@ For `TUNNEL_CRED`: this is the tunnel credential JSON file produced when you cre
 | Secret name | Value | Notes |
 |---|---|---|
 | `codevibes-jwt-secret` | output of `openssl rand -base64 32` | Rotatable |
-| `codevibes-encryption-key` | output of `openssl rand -hex 16` | **NEVER rotate** |
+| `codevibes-encryption-key` | output of `openssl rand -hex 32` (64 hex chars) | **NEVER rotate** |
 | `codevibes-github-client-id` | GitHub OAuth App Client ID | From GitHub |
 | `codevibes-github-client-secret` | GitHub OAuth App Client Secret | From GitHub |
 | `codevibes-tunnel-cred` | Tunnel credential JSON (one line) | From tunnel creation |

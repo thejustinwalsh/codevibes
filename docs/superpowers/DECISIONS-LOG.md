@@ -161,3 +161,9 @@ Format per entry:
 - **Decision:** `git update-index --chmod=+x` on all deploy/patches/runbook scripts (now 100755). Added a cloud-init safety-net `chmod +x` after clone. Added an integration-test assertion `test -x` on the key scripts (the test missed this before because fetch-secrets also fails on the dummy token). Immediate box unblocked by invoking via `bash <script>`.
 - **Affected:** all `deploy/*.sh`, `patches/*.sh`, `docs/runbooks/render.sh` (mode), `deploy/cloud-init.template.yaml`, `deploy/tests/cloud-init-integration.sh`.
 - **Revisit:** none — modes fixed in git + safety net + test guard.
+
+## 2026-06-21 — ENCRYPTION_KEY must be 64 hex chars (upstream docs say 32 — wrong); OAuth login-loop root cause
+- **Context:** GitHub OAuth login looped; backend logged `GitHub OAuth callback error: Invalid key length`. `encryption.ts` uses AES-256-GCM with `KEY = Buffer.from(ENCRYPTION_KEY.slice(0,64), 'hex')` (needs 32 bytes) and warns if length < 64. The upstream `.env.example`/README say "32 chars / `openssl rand -hex 16`" (16 bytes) — wrong — and we propagated it into the spec/runbook. A 32-hex-char key → 16 bytes → `createCipheriv` throws on the first token encryption (the OAuth callback), so login never persists.
+- **Decision:** Correct key is **64 hex chars / 32 bytes** (`openssl rand -hex 32`). Updated spec §8/§12 and the cloudflare-secrets runbook (md+html). Fixed live by regenerating the key in Secrets Store + re-fetch + restart backend — SAFE because no token had ever been successfully encrypted (the key was effectively unused); per the immutability rule it becomes permanent only after the first successful login.
+- **Affected:** spec §8/§12, `docs/runbooks/cloudflare-secrets.{md,html}`.
+- **Revisit:** none.
