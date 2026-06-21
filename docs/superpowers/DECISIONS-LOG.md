@@ -143,3 +143,9 @@ Format per entry:
 - **Decision:** Drop `--force` from every ufw line except `enable`. Also fixed bug B — the `users:` block omitted `- default`, which suppresses injection of the operator's SSH key (would cause permission-denied even once reachable) — by adding `- default`; and cleared the `sudo: false` cloud-init deprecation by omitting the key.
 - **Affected:** `deploy/cloud-init.template.yaml`.
 - **Revisit:** none — root cause verified empirically; live box unblocked via `sudo ufw allow 22/tcp` on the console.
+
+## 2026-06-21 — Pod bring-up validated in OrbStack; fixed container-service restart + container names
+- **Context:** Before another from-scratch deploy, validated the full pod start in OrbStack (rootless, real Quadlet + `systemctl --user`). Found two more bugs: (1) `deploy.sh` `swap_to` restarted only `codevibes-pod`, leaving the per-container Quadlet services down → nothing actually starts; (2) Quadlet names containers `systemd-<unit>` by default, so `podman logs/exec codevibes-*` (and the runbook commands) failed.
+- **Decision:** `swap_to` now restarts the container services (`codevibes-backend/web/cloudflared.service`), which pull in the pod + volume. Added `ContainerName=` to each `.container` for clean names. **Re-validated:** pod Up; backend `/api/health` OK directly AND through Caddy (single-origin proxy); Caddy serves the SPA. (cloudflared not exercised — needs a live tunnel.)
+- **Affected:** `deploy/deploy.sh`, `deploy/quadlet/codevibes-{backend,web,cloudflared}.container`.
+- **Revisit:** confirm cloudflared registers on the real box.

@@ -3,6 +3,7 @@ Description=CodeVibes Web (Caddy + SPA)
 After=network-online.target
 
 [Container]
+ContainerName=codevibes-web
 Image=localhost/codevibes-web:current
 Pod=codevibes.pod
 

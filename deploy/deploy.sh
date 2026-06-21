@@ -55,7 +55,10 @@ swap_to() { # retarget the floating :current tags + restart pod
   podman tag "$IMAGE_BACKEND:$tag" "localhost/codevibes-backend:current"
   podman tag "$IMAGE_WEB:$tag" "localhost/codevibes-web:current"
   systemctl --user daemon-reload 2>/dev/null || true
-  systemctl --user restart codevibes-pod 2>/dev/null || true
+  # Restart the CONTAINER services (not just the pod): with Quadlet each container is
+  # its own service and pulls in the pod + volume as dependencies. Restarting only the
+  # pod service would leave the containers down. `restart` also starts them on first run.
+  systemctl --user restart codevibes-backend.service codevibes-web.service codevibes-cloudflared.service 2>/dev/null || true
 }
 
 record_state() { printf 'CURRENT=%s\nPREVIOUS=%s\n' "$1" "$2" > "$STATE"; }

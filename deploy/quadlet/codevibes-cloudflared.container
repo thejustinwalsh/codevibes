@@ -3,6 +3,7 @@ Description=CodeVibes Cloudflare Tunnel
 After=network-online.target
 
 [Container]
+ContainerName=codevibes-cloudflared
 Image=docker.io/cloudflare/cloudflared:latest
 Pod=codevibes.pod
 Volume=%h/codevibes/deploy/cloudflared/config.yml:/etc/cloudflared/config.yml:ro,Z

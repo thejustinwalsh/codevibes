@@ -3,6 +3,7 @@ Description=CodeVibes API
 After=network-online.target
 
 [Container]
+ContainerName=codevibes-backend
 Image=localhost/codevibes-backend:current
 Pod=codevibes.pod
 Environment=NODE_ENV=production
